@@ -1,0 +1,208 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { IcechunkStore } from '../src/store.js';
+import type { AbsolutePath } from '../src/store.js';
+import { MockStorage } from './fixtures/mock-storage.js';
+
+/**
+ * Helper to create an IcechunkStore with a mock session.
+ */
+function createStoreWithMockSession(mockSession: {
+  getRawMetadata: ReturnType<typeof vi.fn>;
+  getChunk: ReturnType<typeof vi.fn>;
+}): IcechunkStore {
+  const store = Object.create(IcechunkStore.prototype);
+  store.session = mockSession;
+  store.sessionPromise = Promise.resolve(mockSession);
+  return store;
+}
+
+describe('IcechunkStore', () => {
+  describe('constructor', () => {
+    it('should accept a Storage and start lazy init', async () => {
+      const storage = new MockStorage({});
+      const store = new IcechunkStore(storage);
+
+      expect(store).toBeInstanceOf(IcechunkStore);
+      await expect(store.get('/zarr.json' as AbsolutePath)).rejects.toThrow();
+    });
+  });
+
+  describe('get with mock session', () => {
+    let getRawMetadataSpy: ReturnType<typeof vi.fn>;
+    let getChunkSpy: ReturnType<typeof vi.fn>;
+    let store: IcechunkStore;
+
+    beforeEach(() => {
+      getRawMetadataSpy = vi.fn();
+      getChunkSpy = vi.fn();
+
+      store = createStoreWithMockSession({
+        getRawMetadata: getRawMetadataSpy,
+        getChunk: getChunkSpy,
+      });
+    });
+
+    describe('metadata keys', () => {
+      it('should parse root metadata key /zarr.json', async () => {
+        getRawMetadataSpy.mockReturnValue(new Uint8Array([1, 2, 3]));
+
+        const result = await store.get('/zarr.json' as AbsolutePath);
+
+        expect(getRawMetadataSpy).toHaveBeenCalledWith('/');
+        expect(result).toEqual(new Uint8Array([1, 2, 3]));
+      });
+
+      it('should parse nested metadata key', async () => {
+        getRawMetadataSpy.mockReturnValue(new Uint8Array([4, 5, 6]));
+
+        const result = await store.get('/group/subgroup/array/zarr.json' as AbsolutePath);
+
+        expect(getRawMetadataSpy).toHaveBeenCalledWith('/group/subgroup/array');
+        expect(result).toEqual(new Uint8Array([4, 5, 6]));
+      });
+
+      it('should return undefined for missing metadata', async () => {
+        getRawMetadataSpy.mockReturnValue(null);
+
+        const result = await store.get('/missing/zarr.json' as AbsolutePath);
+
+        expect(result).toBeUndefined();
+      });
+    });
+
+    describe('chunk keys', () => {
+      it('should parse chunk key with coordinates', async () => {
+        getChunkSpy.mockResolvedValue(new Uint8Array([10, 20, 30]));
+
+        const result = await store.get('/array/c/1/2/3' as AbsolutePath);
+
+        expect(getChunkSpy).toHaveBeenCalledWith('/array', [1, 2, 3]);
+        expect(result).toEqual(new Uint8Array([10, 20, 30]));
+      });
+
+      it('should parse chunk key with empty coordinates', async () => {
+        getChunkSpy.mockResolvedValue(new Uint8Array([100]));
+
+        const result = await store.get('/array/c' as AbsolutePath);
+
+        expect(getChunkSpy).toHaveBeenCalledWith('/array', []);
+        expect(result).toEqual(new Uint8Array([100]));
+      });
+
+      it('should return undefined for missing chunks', async () => {
+        getChunkSpy.mockResolvedValue(null);
+
+        const result = await store.get('/array/c/999' as AbsolutePath);
+
+        expect(result).toBeUndefined();
+      });
+    });
+
+    describe('error handling', () => {
+      it('should return undefined on error', async () => {
+        getRawMetadataSpy.mockImplementation(() => {
+          throw new Error('Storage error');
+        });
+
+        const result = await store.get('/array/zarr.json' as AbsolutePath);
+
+        expect(result).toBeUndefined();
+      });
+    });
+
+    describe('key parsing edge cases', () => {
+      it('should treat unrecognized keys as metadata (default fallback)', async () => {
+        getRawMetadataSpy.mockReturnValue(new Uint8Array([99]));
+
+        // Key that doesn't match zarr.json or chunk pattern
+        const result = await store.get('/some/random/path' as AbsolutePath);
+
+        // Should fall back to metadata lookup at that path
+        expect(getRawMetadataSpy).toHaveBeenCalledWith('/some/random/path');
+        expect(result).toEqual(new Uint8Array([99]));
+      });
+
+      it('should handle root-level chunk key', async () => {
+        getChunkSpy.mockResolvedValue(new Uint8Array([42]));
+
+        // Root array chunk: /c/0
+        const result = await store.get('/c/0' as AbsolutePath);
+
+        expect(getChunkSpy).toHaveBeenCalledWith('/', [0]);
+        expect(result).toEqual(new Uint8Array([42]));
+      });
+
+      it('should parse NaN coordinates as NaN values', async () => {
+        getChunkSpy.mockResolvedValue(new Uint8Array([1]));
+
+        // Invalid coordinate that parses to NaN
+        const result = await store.get('/array/c/invalid' as AbsolutePath);
+
+        // Number('invalid') = NaN, verify the behavior
+        expect(getChunkSpy).toHaveBeenCalledWith('/array', [NaN]);
+      });
+
+      it('should handle mixed valid and invalid coordinates', async () => {
+        getChunkSpy.mockResolvedValue(new Uint8Array([1]));
+
+        const result = await store.get('/array/c/0/abc/2' as AbsolutePath);
+
+        // [0, NaN, 2]
+        const call = getChunkSpy.mock.calls[0];
+        expect(call[0]).toBe('/array');
+        expect(call[1][0]).toBe(0);
+        expect(Number.isNaN(call[1][1])).toBe(true);
+        expect(call[1][2]).toBe(2);
+      });
+    });
+  });
+
+  describe('getRange', () => {
+    it('should return sliced data for offset/length range', async () => {
+      const getRawMetadataSpy = vi.fn().mockReturnValue(
+        new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
+      );
+
+      const store = createStoreWithMockSession({
+        getRawMetadata: getRawMetadataSpy,
+        getChunk: vi.fn(),
+      });
+
+      const result = await store.getRange(
+        '/zarr.json' as AbsolutePath,
+        { offset: 2, length: 4 }
+      );
+
+      expect(result).toEqual(new Uint8Array([2, 3, 4, 5]));
+    });
+
+    it('should return sliced data for suffixLength range', async () => {
+      const getRawMetadataSpy = vi.fn().mockReturnValue(
+        new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
+      );
+
+      const store = createStoreWithMockSession({
+        getRawMetadata: getRawMetadataSpy,
+        getChunk: vi.fn(),
+      });
+
+      const result = await store.getRange(
+        '/zarr.json' as AbsolutePath,
+        { suffixLength: 3 }
+      );
+
+      expect(result).toEqual(new Uint8Array([7, 8, 9]));
+    });
+  });
+
+  describe('lazy initialization', () => {
+    it('should throw on get() when repository is invalid', async () => {
+      const storage = new MockStorage({});
+      const store = new IcechunkStore(storage);
+
+      await expect(store.get('/zarr.json' as AbsolutePath)).rejects.toThrow(
+        'Not a valid icechunk repository'
+      );
+    });
+  });
+});
