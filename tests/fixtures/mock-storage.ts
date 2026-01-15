@@ -2,7 +2,7 @@
  * Mock storage for testing.
  */
 
-import type { Storage, ByteRange } from '../../src/storage/storage.js';
+import type { Storage, ByteRange, RequestOptions } from '../../src/storage/storage.js';
 import { NotFoundError, StorageError } from '../../src/storage/storage.js';
 import {
   HEADER_SIZE,
@@ -63,7 +63,7 @@ export class MockStorage implements Storage {
     return [...this.files.keys()];
   }
 
-  async getObject(path: string, range?: ByteRange): Promise<Uint8Array> {
+  async getObject(path: string, range?: ByteRange, _options?: RequestOptions): Promise<Uint8Array> {
     const data = this.files.get(path);
     if (!data) {
       throw new NotFoundError(`Object not found: ${path}`);
@@ -76,7 +76,7 @@ export class MockStorage implements Storage {
     return data;
   }
 
-  async exists(path: string): Promise<boolean> {
+  async exists(path: string, _options?: RequestOptions): Promise<boolean> {
     return this.files.has(path);
   }
 

@@ -32,7 +32,7 @@ export { ReadSession } from './reader/session.js';
 // Storage backends
 export { HttpStorage } from './storage/http-storage.js';
 export type { HttpStorageOptions } from './storage/http-storage.js';
-export type { Storage, ByteRange } from './storage/storage.js';
+export type { Storage, ByteRange, RequestOptions } from './storage/storage.js';
 export { NotFoundError, StorageError } from './storage/storage.js';
 
 // Format types (for advanced usage)

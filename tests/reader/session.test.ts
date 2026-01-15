@@ -470,4 +470,34 @@ describe('ReadSession', () => {
       expect(result).toBe(inlineData);
     });
   });
+
+  describe('abort signal handling', () => {
+    it('should return null when signal is already aborted', async () => {
+      const session = createMockSession({
+        nodes: [createArrayNode('/array', { manifests: [] })],
+      });
+
+      const controller = new AbortController();
+      controller.abort();
+
+      const result = await session.getChunk('/array', [0], {
+        signal: controller.signal,
+      });
+
+      expect(result).toBeNull();
+    });
+
+    it('should return null for non-existent array (not throw)', async () => {
+      const session = createMockSession({ nodes: [] });
+
+      const controller = new AbortController();
+
+      // Should return null for non-existent path, not throw
+      const result = await session.getChunk('/nonexistent', [0], {
+        signal: controller.signal,
+      });
+
+      expect(result).toBeNull();
+    });
+  });
 });

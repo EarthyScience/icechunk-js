@@ -44,6 +44,9 @@ export interface IcechunkStoreOptions {
 
   /** Specific snapshot ID to checkout (Base32 string) */
   snapshot?: string;
+
+  /** AbortSignal for cancelling initialization */
+  signal?: AbortSignal;
 }
 
 /**
@@ -108,15 +111,16 @@ export class IcechunkStore implements AsyncReadable {
     options: IcechunkStoreOptions
   ): Promise<ReadSession> {
     const storage = typeof arg === 'string' ? new HttpStorage(arg) : arg;
-    const repo = await Repository.open({ storage });
+    const requestOptions = options.signal ? { signal: options.signal } : undefined;
+    const repo = await Repository.open({ storage }, requestOptions);
 
     let session: ReadSession;
     if (options.snapshot) {
-      session = await repo.checkoutSnapshot(options.snapshot);
+      session = await repo.checkoutSnapshot(options.snapshot, requestOptions);
     } else if (options.tag) {
-      session = await repo.checkoutTag(options.tag);
+      session = await repo.checkoutTag(options.tag, requestOptions);
     } else {
-      session = await repo.checkoutBranch(options.branch ?? 'main');
+      session = await repo.checkoutBranch(options.branch ?? 'main', requestOptions);
     }
 
     this.session = session;
@@ -137,22 +141,33 @@ export class IcechunkStore implements AsyncReadable {
    * - "/array/c/0/1/2" - chunk at coords [0, 1, 2]
    *
    * @param key - Absolute path (must start with "/")
+   * @param opts - Optional request options (supports AbortSignal for cancellation)
    * @returns Data bytes or undefined if not found
    */
-  async get(key: AbsolutePath): Promise<Uint8Array | undefined> {
+  async get(
+    key: AbsolutePath,
+    opts?: { signal?: AbortSignal }
+  ): Promise<Uint8Array | undefined> {
+    // Early abort check before any async work
+    if (opts?.signal?.aborted) return undefined;
+
     const session = await this.getSession();
     const parsed = parseZarrKey(key);
 
     try {
       if (parsed.type === 'metadata') {
+        // Metadata is synchronous - no signal needed
         const data = session.getRawMetadata(parsed.path);
         return data ?? undefined;
       }
 
-      // Chunk key
-      const chunk = await session.getChunk(parsed.path, parsed.coords);
+      // Chunk key - propagate signal to session
+      const chunk = await session.getChunk(parsed.path, parsed.coords, {
+        signal: opts?.signal,
+      });
       return chunk ?? undefined;
     } catch {
+      // AbortError and other errors are handled by returning undefined
       return undefined;
     }
   }
@@ -162,15 +177,19 @@ export class IcechunkStore implements AsyncReadable {
    *
    * @param key - Absolute path
    * @param range - Byte range to fetch
+   * @param opts - Optional request options (supports AbortSignal for cancellation)
    * @returns Data bytes or undefined if not found
    */
   async getRange(
     key: AbsolutePath,
-    range: RangeQuery
+    range: RangeQuery,
+    opts?: { signal?: AbortSignal }
   ): Promise<Uint8Array | undefined> {
+    if (opts?.signal?.aborted) return undefined;
+
     // For now, fetch full data and slice
     // Could optimize later for large chunks
-    const data = await this.get(key);
+    const data = await this.get(key, opts);
     if (!data) return undefined;
 
     if ('suffixLength' in range) {

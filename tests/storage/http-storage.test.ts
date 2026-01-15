@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { HttpStorage } from '../../src/storage/http-storage.js';
-import { NotFoundError, StorageError } from '../../src/storage/storage.js';
+import { NotFoundError, StorageError, AbortError } from '../../src/storage/storage.js';
 
 describe('HttpStorage', () => {
   const originalFetch = global.fetch;
@@ -202,6 +202,89 @@ describe('HttpStorage', () => {
 
       await expect(collectItems()).rejects.toThrow(StorageError);
       await expect(collectItems()).rejects.toThrow('Listing not supported');
+    });
+  });
+
+  describe('abort signal handling', () => {
+    it('should throw AbortError when signal is already aborted (getObject)', async () => {
+      const storage = new HttpStorage('https://example.com/repo');
+      const controller = new AbortController();
+      controller.abort();
+
+      await expect(
+        storage.getObject('file.txt', undefined, { signal: controller.signal })
+      ).rejects.toThrow(AbortError);
+
+      // fetch should not be called
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+
+    it('should throw AbortError when fetch is aborted mid-request (getObject)', async () => {
+      const abortError = new DOMException('Aborted', 'AbortError');
+      vi.mocked(global.fetch).mockRejectedValue(abortError);
+
+      const storage = new HttpStorage('https://example.com/repo');
+      const controller = new AbortController();
+
+      await expect(
+        storage.getObject('file.txt', undefined, { signal: controller.signal })
+      ).rejects.toThrow(AbortError);
+    });
+
+    it('should pass signal to fetch (getObject)', async () => {
+      const mockData = new Uint8Array([1, 2, 3]);
+      vi.mocked(global.fetch).mockResolvedValue({
+        status: 200,
+        arrayBuffer: () => Promise.resolve(mockData.buffer),
+      } as Response);
+
+      const storage = new HttpStorage('https://example.com/repo');
+      const controller = new AbortController();
+
+      await storage.getObject('file.txt', undefined, { signal: controller.signal });
+
+      expect(global.fetch).toHaveBeenCalledWith(
+        'https://example.com/repo/file.txt',
+        expect.objectContaining({ signal: controller.signal })
+      );
+    });
+
+    it('should throw AbortError when signal is already aborted (exists)', async () => {
+      const storage = new HttpStorage('https://example.com/repo');
+      const controller = new AbortController();
+      controller.abort();
+
+      await expect(
+        storage.exists('file.txt', { signal: controller.signal })
+      ).rejects.toThrow(AbortError);
+
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+
+    it('should throw AbortError when fetch is aborted mid-request (exists)', async () => {
+      const abortError = new DOMException('Aborted', 'AbortError');
+      vi.mocked(global.fetch).mockRejectedValue(abortError);
+
+      const storage = new HttpStorage('https://example.com/repo');
+      const controller = new AbortController();
+
+      await expect(
+        storage.exists('file.txt', { signal: controller.signal })
+      ).rejects.toThrow(AbortError);
+    });
+
+    it('should handle non-DOMException abort errors', async () => {
+      // Some fetch implementations throw plain Error with name 'AbortError'
+      const abortError = new Error('Aborted');
+      abortError.name = 'AbortError';
+      vi.mocked(global.fetch).mockRejectedValue(abortError);
+
+      const storage = new HttpStorage('https://example.com/repo');
+      const controller = new AbortController();
+
+      await expect(
+        storage.getObject('file.txt', undefined, { signal: controller.signal })
+      ).rejects.toThrow(AbortError);
     });
   });
 });

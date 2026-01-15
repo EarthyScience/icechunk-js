@@ -4,8 +4,8 @@
  * Works in both Node.js 18+ and browsers.
  */
 
-import type { Storage, ByteRange } from './storage.js';
-import { NotFoundError, StorageError } from './storage.js';
+import type { Storage, ByteRange, RequestOptions } from './storage.js';
+import { NotFoundError, StorageError, AbortError } from './storage.js';
 
 /** Options for HTTP storage */
 export interface HttpStorageOptions {
@@ -60,7 +60,12 @@ export class HttpStorage implements Storage {
     return headers;
   }
 
-  async getObject(path: string, range?: ByteRange): Promise<Uint8Array> {
+  async getObject(path: string, range?: ByteRange, options?: RequestOptions): Promise<Uint8Array> {
+    // Early abort check
+    if (options?.signal?.aborted) {
+      throw new AbortError();
+    }
+
     const url = this.getUrl(path);
     const headers = this.getHeaders(range);
 
@@ -71,8 +76,13 @@ export class HttpStorage implements Storage {
         headers,
         credentials: this.options.credentials,
         cache: this.options.cache,
+        signal: options?.signal,
       });
     } catch (error) {
+      // Translate abort errors to our class (handles DOMException and other implementations)
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new AbortError();
+      }
       throw new StorageError(
         `Failed to fetch ${url}: ${error instanceof Error ? error.message : String(error)}`,
         error instanceof Error ? error : undefined
@@ -94,7 +104,12 @@ export class HttpStorage implements Storage {
     return new Uint8Array(arrayBuffer);
   }
 
-  async exists(path: string): Promise<boolean> {
+  async exists(path: string, options?: RequestOptions): Promise<boolean> {
+    // Early abort check
+    if (options?.signal?.aborted) {
+      throw new AbortError();
+    }
+
     const url = this.getUrl(path);
 
     try {
@@ -102,10 +117,15 @@ export class HttpStorage implements Storage {
         method: 'HEAD',
         headers: this.options.headers,
         credentials: this.options.credentials,
+        signal: options?.signal,
       });
 
       return response.ok;
-    } catch {
+    } catch (error) {
+      // Rethrow abort errors (handles DOMException and other implementations)
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new AbortError();
+      }
       return false;
     }
   }

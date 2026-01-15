@@ -2,7 +2,8 @@
  * ReadSession - Read-only session for accessing icechunk data.
  */
 
-import type { Storage, ByteRange } from '../storage/storage.js';
+import type { Storage, ByteRange, RequestOptions } from '../storage/storage.js';
+import { AbortError } from '../storage/storage.js';
 import { decompress } from 'fzstd';
 import {
   parseHeader,
@@ -55,20 +56,22 @@ export class ReadSession {
    *
    * @param storage - Storage backend
    * @param snapshotId - Snapshot ID (12 bytes)
+   * @param options - Optional request options (signal for cancellation)
    * @returns ReadSession instance
    */
-  static async open(storage: Storage, snapshotId: Uint8Array): Promise<ReadSession> {
-    const { snapshot, specVersion } = await ReadSession.loadSnapshot(storage, snapshotId);
+  static async open(storage: Storage, snapshotId: Uint8Array, options?: RequestOptions): Promise<ReadSession> {
+    const { snapshot, specVersion } = await ReadSession.loadSnapshot(storage, snapshotId, options);
     return new ReadSession(storage, snapshot, specVersion);
   }
 
   /** Load and parse a snapshot from storage */
   private static async loadSnapshot(
     storage: Storage,
-    snapshotId: Uint8Array
+    snapshotId: Uint8Array,
+    options?: RequestOptions
   ): Promise<{ snapshot: Snapshot; specVersion: SpecVersion }> {
     const path = getSnapshotPath(encodeObjectId12(snapshotId));
-    const data = await storage.getObject(path);
+    const data = await storage.getObject(path, undefined, options);
 
     // Parse header
     const header = parseHeader(data);
@@ -88,16 +91,16 @@ export class ReadSession {
   }
 
   /** Load and parse a manifest from storage */
-  private async loadManifest(manifestId: ObjectId12): Promise<Manifest> {
+  private async loadManifest(manifestId: ObjectId12, options?: RequestOptions): Promise<Manifest> {
     const idStr = encodeObjectId12(manifestId);
 
     // Check cache first
     const cached = this.manifestCache.get(idStr);
     if (cached) return cached;
 
-    // Load from storage
+    // Load from storage with signal
     const path = getManifestPath(idStr);
-    const data = await this.storage.getObject(path);
+    const data = await this.storage.getObject(path, undefined, options);
 
     // Parse header
     const header = parseHeader(data);
@@ -219,9 +222,13 @@ export class ReadSession {
    *
    * @param path - Path to the array
    * @param coords - Chunk coordinates (N-dimensional)
+   * @param options - Optional request options (signal for cancellation)
    * @returns Chunk data bytes or null if not found
    */
-  async getChunk(path: string, coords: number[]): Promise<Uint8Array | null> {
+  async getChunk(path: string, coords: number[], options?: RequestOptions): Promise<Uint8Array | null> {
+    // Early abort check
+    if (options?.signal?.aborted) return null;
+
     const node = this.getNode(path);
     if (!node || node.nodeData.type !== 'array') {
       return null;
@@ -230,22 +237,28 @@ export class ReadSession {
     // Find the manifest that contains this chunk
     const arrayData = node.nodeData;
 
-    for (const manifestRef of arrayData.manifests) {
-      // Check if this manifest covers the requested coordinates
-      if (!this.coordsInExtents(coords, manifestRef.extents)) {
-        continue;
+    try {
+      for (const manifestRef of arrayData.manifests) {
+        // Check if this manifest covers the requested coordinates
+        if (!this.coordsInExtents(coords, manifestRef.extents)) {
+          continue;
+        }
+
+        // Load the manifest with signal
+        const manifest = await this.loadManifest(manifestRef.objectId, options);
+
+        // Find the chunk reference
+        const chunkRef = findChunkRef(manifest, node.id, coords);
+        if (!chunkRef) continue;
+
+        // Fetch the chunk data based on payload type with signal
+        const payload = getChunkPayload(chunkRef);
+        return this.fetchChunkPayload(payload, options);
       }
-
-      // Load the manifest
-      const manifest = await this.loadManifest(manifestRef.objectId);
-
-      // Find the chunk reference
-      const chunkRef = findChunkRef(manifest, node.id, coords);
-      if (!chunkRef) continue;
-
-      // Fetch the chunk data based on payload type
-      const payload = getChunkPayload(chunkRef);
-      return this.fetchChunkPayload(payload);
+    } catch (error) {
+      // Mid-flight abort → return null
+      if (error instanceof AbortError) return null;
+      throw error;
     }
 
     return null;
@@ -269,7 +282,7 @@ export class ReadSession {
   }
 
   /** Fetch chunk data based on payload type */
-  private async fetchChunkPayload(payload: ChunkPayload): Promise<Uint8Array> {
+  private async fetchChunkPayload(payload: ChunkPayload, options?: RequestOptions): Promise<Uint8Array> {
     switch (payload.type) {
       case 'inline':
         return payload.data;
@@ -280,17 +293,27 @@ export class ReadSession {
           start: payload.offset,
           end: payload.offset + payload.length,
         };
-        return this.storage.getObject(path, range);
+        return this.storage.getObject(path, range, options);
       }
 
       case 'virtual': {
         // Virtual chunks reference external URLs
         // For now, use fetch directly (could be improved with virtual resolvers)
-        const response = await fetch(payload.location, {
-          headers: {
-            Range: `bytes=${payload.offset}-${payload.offset + payload.length - 1}`,
-          },
-        });
+        let response: Response;
+        try {
+          response = await fetch(payload.location, {
+            headers: {
+              Range: `bytes=${payload.offset}-${payload.offset + payload.length - 1}`,
+            },
+            signal: options?.signal,
+          });
+        } catch (error) {
+          // Translate abort errors to our class (handles DOMException and other implementations)
+          if (error instanceof Error && error.name === 'AbortError') {
+            throw new AbortError();
+          }
+          throw error;
+        }
 
         if (!response.ok && response.status !== 206) {
           throw new Error(

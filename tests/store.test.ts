@@ -76,7 +76,7 @@ describe('IcechunkStore', () => {
 
         const result = await store.get('/array/c/1/2/3' as AbsolutePath);
 
-        expect(getChunkSpy).toHaveBeenCalledWith('/array', [1, 2, 3]);
+        expect(getChunkSpy).toHaveBeenCalledWith('/array', [1, 2, 3], { signal: undefined });
         expect(result).toEqual(new Uint8Array([10, 20, 30]));
       });
 
@@ -85,7 +85,7 @@ describe('IcechunkStore', () => {
 
         const result = await store.get('/array/c' as AbsolutePath);
 
-        expect(getChunkSpy).toHaveBeenCalledWith('/array', []);
+        expect(getChunkSpy).toHaveBeenCalledWith('/array', [], { signal: undefined });
         expect(result).toEqual(new Uint8Array([100]));
       });
 
@@ -128,7 +128,7 @@ describe('IcechunkStore', () => {
         // Root array chunk: /c/0
         const result = await store.get('/c/0' as AbsolutePath);
 
-        expect(getChunkSpy).toHaveBeenCalledWith('/', [0]);
+        expect(getChunkSpy).toHaveBeenCalledWith('/', [0], { signal: undefined });
         expect(result).toEqual(new Uint8Array([42]));
       });
 
@@ -139,7 +139,7 @@ describe('IcechunkStore', () => {
         const result = await store.get('/array/c/invalid' as AbsolutePath);
 
         // Number('invalid') = NaN, verify the behavior
-        expect(getChunkSpy).toHaveBeenCalledWith('/array', [NaN]);
+        expect(getChunkSpy).toHaveBeenCalledWith('/array', [NaN], { signal: undefined });
       });
 
       it('should handle mixed valid and invalid coordinates', async () => {
@@ -203,6 +203,78 @@ describe('IcechunkStore', () => {
       await expect(store.get('/zarr.json' as AbsolutePath)).rejects.toThrow(
         'Not a valid icechunk repository'
       );
+    });
+  });
+
+  describe('abort signal handling', () => {
+    it('should return undefined when signal is already aborted', async () => {
+      const getChunkSpy = vi.fn();
+      const store = createStoreWithMockSession({
+        getRawMetadata: vi.fn(),
+        getChunk: getChunkSpy,
+      });
+
+      const controller = new AbortController();
+      controller.abort();
+
+      const result = await store.get('/array/c/0' as AbsolutePath, {
+        signal: controller.signal,
+      });
+
+      expect(result).toBeUndefined();
+      expect(getChunkSpy).not.toHaveBeenCalled();
+    });
+
+    it('should pass signal to getChunk', async () => {
+      const getChunkSpy = vi.fn().mockResolvedValue(new Uint8Array([1, 2, 3]));
+      const store = createStoreWithMockSession({
+        getRawMetadata: vi.fn(),
+        getChunk: getChunkSpy,
+      });
+
+      const controller = new AbortController();
+
+      await store.get('/array/c/0' as AbsolutePath, {
+        signal: controller.signal,
+      });
+
+      expect(getChunkSpy).toHaveBeenCalledWith('/array', [0], {
+        signal: controller.signal,
+      });
+    });
+
+    it('should return undefined when getChunk returns null due to abort', async () => {
+      const getChunkSpy = vi.fn().mockResolvedValue(null);
+      const store = createStoreWithMockSession({
+        getRawMetadata: vi.fn(),
+        getChunk: getChunkSpy,
+      });
+
+      const controller = new AbortController();
+
+      const result = await store.get('/array/c/0' as AbsolutePath, {
+        signal: controller.signal,
+      });
+
+      expect(result).toBeUndefined();
+    });
+
+    it('should return undefined for getRange when signal is already aborted', async () => {
+      const store = createStoreWithMockSession({
+        getRawMetadata: vi.fn().mockReturnValue(new Uint8Array([1, 2, 3, 4, 5])),
+        getChunk: vi.fn(),
+      });
+
+      const controller = new AbortController();
+      controller.abort();
+
+      const result = await store.getRange(
+        '/zarr.json' as AbsolutePath,
+        { offset: 0, length: 3 },
+        { signal: controller.signal }
+      );
+
+      expect(result).toBeUndefined();
     });
   });
 });

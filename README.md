@@ -51,6 +51,7 @@ const store = new IcechunkStore("https://example.com/repo", {
   branch: "main", // checkout a branch (default)
   // tag: 'v1.0',      // or checkout a tag
   // snapshot: 'ABC123...',  // or checkout a specific snapshot ID
+  // signal: controller.signal,  // AbortSignal for init cancellation
 });
 
 // From a custom Storage backend
@@ -116,14 +117,16 @@ const storage = new HttpStorage("https://bucket.s3.amazonaws.com/repo", {
 Implement the `Storage` interface for other backends:
 
 ```typescript
-import type { Storage, ByteRange } from 'icechunk-js';
+import type { Storage, ByteRange, RequestOptions } from 'icechunk-js';
 
 class MyStorage implements Storage {
-  async getObject(path: string, range?: ByteRange): Promise<Uint8Array> { ... }
-  async exists(path: string): Promise<boolean> { ... }
+  async getObject(path: string, range?: ByteRange, options?: RequestOptions): Promise<Uint8Array> { ... }
+  async exists(path: string, options?: RequestOptions): Promise<boolean> { ... }
   async *listPrefix(prefix: string): AsyncIterable<string> { ... }
 }
 ```
+
+The `RequestOptions` type contains an optional `signal: AbortSignal` for cancellation support.
 
 ## License
 
