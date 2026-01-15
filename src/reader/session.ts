@@ -311,7 +311,7 @@ export class ReadSession {
 
     while (low <= high) {
       const mid = Math.floor((low + high) / 2);
-      const cmp = nodes[mid].path.localeCompare(path);
+      const cmp = compareUtf8Bytes(nodes[mid].path, path);
 
       if (cmp === 0) {
         return nodes[mid];
@@ -324,4 +324,28 @@ export class ReadSession {
 
     return null;
   }
+}
+
+/** UTF-8 encoder for byte comparisons */
+const utf8Encoder = new TextEncoder();
+
+/**
+ * Compare two strings by UTF-8 byte order to match Rust's str::cmp.
+ *
+ * JavaScript's native string comparison uses UTF-16 code units, which differs
+ * from UTF-8 byte order for characters outside the Basic Multilingual Plane
+ * (code points > 0xFFFF, like emoji).
+ */
+function compareUtf8Bytes(a: string, b: string): number {
+  const bytesA = utf8Encoder.encode(a);
+  const bytesB = utf8Encoder.encode(b);
+
+  const minLen = Math.min(bytesA.length, bytesB.length);
+  for (let i = 0; i < minLen; i++) {
+    if (bytesA[i] !== bytesB[i]) {
+      return bytesA[i] - bytesB[i];
+    }
+  }
+
+  return bytesA.length - bytesB.length;
 }

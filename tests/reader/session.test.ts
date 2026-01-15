@@ -182,6 +182,70 @@ describe('ReadSession', () => {
       expect(node).not.toBeNull();
       expect(node!.path).toBe('/test');
     });
+
+    it('should use byte-order comparison for ASCII (not locale-aware)', () => {
+      // In byte order: 'A' (65) < 'Z' (90) < 'a' (97) < 'z' (122)
+      // localeCompare might sort case-insensitively or differently
+      // Rust uses byte-order sorting, so we must match it
+      const session = createMockSession({
+        nodes: [
+          createGroupNode('/A'),
+          createGroupNode('/Z'),
+          createGroupNode('/a'),
+          createGroupNode('/z'),
+        ],
+      });
+
+      // All nodes should be findable with byte-order binary search
+      expect(session.getNode('/A')).not.toBeNull();
+      expect(session.getNode('/Z')).not.toBeNull();
+      expect(session.getNode('/a')).not.toBeNull();
+      expect(session.getNode('/z')).not.toBeNull();
+
+      // Non-existent paths should return null
+      expect(session.getNode('/B')).toBeNull();
+      expect(session.getNode('/m')).toBeNull();
+    });
+
+    it('should use UTF-8 byte-order comparison for non-ASCII', () => {
+      // UTF-8 byte order for these characters:
+      // 'ß' (U+00DF) = C3 9F
+      // 'ä' (U+00E4) = C3 A4
+      // 'Ω' (U+03A9) = CE A9
+      // So UTF-8 order is: ß < ä < Ω
+      const session = createMockSession({
+        nodes: [
+          createGroupNode('/ß'),
+          createGroupNode('/ä'),
+          createGroupNode('/Ω'),
+        ],
+      });
+
+      expect(session.getNode('/ß')).not.toBeNull();
+      expect(session.getNode('/ä')).not.toBeNull();
+      expect(session.getNode('/Ω')).not.toBeNull();
+      expect(session.getNode('/α')).toBeNull(); // U+03B1, not in list
+    });
+
+    it('should use UTF-8 byte-order for characters outside BMP', () => {
+      // Characters outside the Basic Multilingual Plane (> U+FFFF)
+      // are where UTF-16 and UTF-8 ordering can differ.
+      // UTF-8 byte order:
+      // '￿' (U+FFFF) = EF BF BF (3 bytes, last BMP char)
+      // '𐀀' (U+10000) = F0 90 80 80 (4 bytes, first non-BMP char)
+      // In UTF-8 byte order: U+FFFF < U+10000 (EF < F0)
+      // In UTF-16 code unit order: U+10000 < U+FFFF (surrogate 0xD800 < 0xFFFF)
+      const session = createMockSession({
+        nodes: [
+          createGroupNode('/\uFFFF'),  // Last BMP character
+          createGroupNode('/\u{10000}'), // First non-BMP character (𐀀)
+        ],
+      });
+
+      expect(session.getNode('/\uFFFF')).not.toBeNull();
+      expect(session.getNode('/\u{10000}')).not.toBeNull();
+    });
+
   });
 
   describe('getMetadata', () => {
