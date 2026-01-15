@@ -1,0 +1,54 @@
+{
+  "name": "icechunk-js",
+  "version": "0.1.0",
+  "description": "Read-only JavaScript/TypeScript reader for Icechunk repositories",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "sideEffects": false,
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "keywords": [
+    "icechunk",
+    "zarr",
+    "zarrita"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "fzstd": "^0.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsup": "^8.5.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.4.0",
+    "vitest": "^1.4.0",
+    "zarrita": "^0.5.0"
+  },
+  "peerDependencies": {
+    "zarrita": "^0.5.0"
+  },
+  "peerDependenciesMeta": {
+    "zarrita": {
+      "optional": true
+    }
+  }
+}
