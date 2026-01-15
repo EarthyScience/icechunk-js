@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Repository } from '../../src/reader/repository.js';
 import {
   MockStorage,
@@ -15,15 +18,22 @@ import {
 } from '../../src/format/constants.js';
 import { encodeObjectId12 } from '../../src/format/object-id.js';
 
+// ESM equivalent of __dirname
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+// Path to v2 test repository in the Python package
+const TEST_REPO_V2_PATH = join(__dirname, '../../../icechunk-python/tests/data/test-repo-v2');
+
 describe('Repository', () => {
   describe('open', () => {
-    it('should open a valid v2 repository with repo info file', async () => {
+    it('should throw on corrupted v2 repo file', async () => {
       const storage = new MockStorage({
-        [REPO_INFO_PATH]: 'repo info content',
+        [REPO_INFO_PATH]: 'not a valid repo file',
       });
 
-      const repo = await Repository.open({ storage });
-      expect(repo).toBeInstanceOf(Repository);
+      await expect(Repository.open({ storage })).rejects.toThrow(
+        'Failed to parse v2 repo file'
+      );
     });
 
     it('should open a valid v1 repository with main branch', async () => {
@@ -36,15 +46,17 @@ describe('Repository', () => {
       expect(repo).toBeInstanceOf(Repository);
     });
 
-    it('should open a repository with both repo info and main branch', async () => {
+    it('should fail on corrupted v2 repo even if v1 main branch exists', async () => {
+      // When repo file exists but is corrupted, should fail fast (not fall back to v1)
       const snapshotId = createMockSnapshotId(1);
       const storage = new MockStorage({
-        [REPO_INFO_PATH]: 'repo info content',
+        [REPO_INFO_PATH]: 'corrupted repo file',
         [getBranchRefPath('main')]: createMockRefJson(snapshotId),
       });
 
-      const repo = await Repository.open({ storage });
-      expect(repo).toBeInstanceOf(Repository);
+      await expect(Repository.open({ storage })).rejects.toThrow(
+        'Failed to parse v2 repo file'
+      );
     });
 
     it('should throw on invalid repository (no repo info or main branch)', async () => {
@@ -68,10 +80,9 @@ describe('Repository', () => {
   });
 
   describe('listBranches', () => {
-    it('should list branches including those with slashes', async () => {
+    it('should list branches including those with slashes (v1 format)', async () => {
       const snapshotId = createMockSnapshotId(1);
       const storage = new MockStorage({
-        [REPO_INFO_PATH]: 'repo info',
         [getBranchRefPath('main')]: createMockRefJson(snapshotId),
         [getBranchRefPath('feature/test')]: createMockRefJson(snapshotId),
       });
@@ -84,21 +95,24 @@ describe('Repository', () => {
       expect(branches).toHaveLength(2);
     });
 
-    it('should return empty array when no branches exist', async () => {
+    it('should return empty array when no branches exist (v1 format)', async () => {
+      const snapshotId = createMockSnapshotId(1);
       const storage = new MockStorage({
-        [REPO_INFO_PATH]: 'repo info',
+        [getBranchRefPath('main')]: createMockRefJson(snapshotId),
       });
 
       const repo = await Repository.open({ storage });
-      const branches = await repo.listBranches();
 
+      // Clear the storage to simulate no branches after opening
+      storage.setFiles({});
+
+      const branches = await repo.listBranches();
       expect(branches).toEqual([]);
     });
 
-    it('should fallback to checking common names when listPrefix not supported', async () => {
+    it('should fallback to checking common names when listPrefix not supported (v1 format)', async () => {
       const snapshotId = createMockSnapshotId(1);
       const storage = new MockStorageNoList({
-        [REPO_INFO_PATH]: 'repo info',
         [getBranchRefPath('main')]: createMockRefJson(snapshotId),
       });
 
@@ -108,10 +122,9 @@ describe('Repository', () => {
       expect(branches).toContain('main');
     });
 
-    it('should exclude branches with deletion tombstones', async () => {
+    it('should exclude branches with deletion tombstones (v1 format)', async () => {
       const snapshotId = createMockSnapshotId(1);
       const storage = new MockStorage({
-        [REPO_INFO_PATH]: 'repo info',
         // Active branch (no tombstone)
         [`${getBranchRefDirPath('main')}ZZZZZZZZ.json`]: createMockRefJson(snapshotId),
         // Deleted branch (ref file + tombstone)
@@ -127,10 +140,10 @@ describe('Repository', () => {
       expect(branches).toHaveLength(1);
     });
 
-    it('should include branch if older version deleted but newer exists', async () => {
+    it('should include branch if older version deleted but newer exists (v1 format)', async () => {
       const snapshotId = createMockSnapshotId(1);
       const storage = new MockStorage({
-        [REPO_INFO_PATH]: 'repo info',
+        [getBranchRefPath('main')]: createMockRefJson(snapshotId),
         // Branch with deleted old version and active new version
         [`${getBranchRefDirPath('active')}AAAAAAAA.json`]: createMockRefJson(snapshotId),
         [`${getBranchRefDirPath('active')}AAAAAAAA.json.deleted`]: '',
@@ -143,11 +156,9 @@ describe('Repository', () => {
       expect(branches).toContain('active');
     });
 
-    it('should handle versioned ref filenames', async () => {
+    it('should handle versioned ref filenames (v1 format)', async () => {
       const snapshotId = createMockSnapshotId(1);
       const storage = new MockStorage({
-        [REPO_INFO_PATH]: 'repo info',
-        // Versioned filename format (not ref.json)
         [`${getBranchRefDirPath('main')}ZZZZZZZZ.json`]: createMockRefJson(snapshotId),
         [`${getBranchRefDirPath('develop')}ABC12345.json`]: createMockRefJson(snapshotId),
       });
@@ -162,10 +173,10 @@ describe('Repository', () => {
   });
 
   describe('listTags', () => {
-    it('should list tags including those with slashes', async () => {
+    it('should list tags including those with slashes (v1 format)', async () => {
       const snapshotId = createMockSnapshotId(1);
       const storage = new MockStorage({
-        [REPO_INFO_PATH]: 'repo info',
+        [getBranchRefPath('main')]: createMockRefJson(snapshotId),
         [getTagRefPath('v1.0')]: createMockRefJson(snapshotId),
         [getTagRefPath('release/v2.0')]: createMockRefJson(snapshotId),
       });
@@ -178,9 +189,10 @@ describe('Repository', () => {
       expect(tags).toHaveLength(2);
     });
 
-    it('should return empty array when no tags exist', async () => {
+    it('should return empty array when no tags exist (v1 format)', async () => {
+      const snapshotId = createMockSnapshotId(1);
       const storage = new MockStorage({
-        [REPO_INFO_PATH]: 'repo info',
+        [getBranchRefPath('main')]: createMockRefJson(snapshotId),
       });
 
       const repo = await Repository.open({ storage });
@@ -189,24 +201,24 @@ describe('Repository', () => {
       expect(tags).toEqual([]);
     });
 
-    it('should return empty array when listPrefix not supported', async () => {
+    it('should return empty array when listPrefix not supported (v1 format)', async () => {
       const snapshotId = createMockSnapshotId(1);
       const storage = new MockStorageNoList({
-        [REPO_INFO_PATH]: 'repo info',
+        [getBranchRefPath('main')]: createMockRefJson(snapshotId),
         [getTagRefPath('v1.0')]: createMockRefJson(snapshotId),
       });
 
       const repo = await Repository.open({ storage });
       const tags = await repo.listTags();
 
-      // Tags cannot be enumerated without listPrefix support
+      // Tags cannot be enumerated without listPrefix support in v1 format
       expect(tags).toEqual([]);
     });
 
-    it('should exclude tags with deletion tombstones', async () => {
+    it('should exclude tags with deletion tombstones (v1 format)', async () => {
       const snapshotId = createMockSnapshotId(1);
       const storage = new MockStorage({
-        [REPO_INFO_PATH]: 'repo info',
+        [getBranchRefPath('main')]: createMockRefJson(snapshotId),
         // Active tag (no tombstone)
         [`${getTagRefDirPath('v1.0')}ZZZZZZZZ.json`]: createMockRefJson(snapshotId),
         // Deleted tag (ref file + tombstone)
@@ -222,10 +234,10 @@ describe('Repository', () => {
       expect(tags).toHaveLength(1);
     });
 
-    it('should exclude tag even with multiple versions if latest is deleted', async () => {
+    it('should exclude tag even with multiple versions if latest is deleted (v1 format)', async () => {
       const snapshotId = createMockSnapshotId(1);
       const storage = new MockStorage({
-        [REPO_INFO_PATH]: 'repo info',
+        [getBranchRefPath('main')]: createMockRefJson(snapshotId),
         // Tag with multiple versions, latest is deleted
         [`${getTagRefDirPath('deleted-tag')}AAAAAAAA.json`]: createMockRefJson(snapshotId),
         [`${getTagRefDirPath('deleted-tag')}ZZZZZZZZ.json`]: createMockRefJson(snapshotId),
@@ -241,12 +253,9 @@ describe('Repository', () => {
   });
 
   describe('ref resolution edge cases', () => {
-    it('should find versioned ref file over legacy ref.json in fallback mode', async () => {
+    it('should find versioned ref file over legacy ref.json in fallback mode (v1 format)', async () => {
       const snapshotId = createMockSnapshotId(1);
-      // Storage without listPrefix support
       const storage = new MockStorageNoList({
-        [REPO_INFO_PATH]: 'repo info',
-        // Versioned filename (checked first in fallback)
         [`${getBranchRefDirPath('main')}ZZZZZZZZ.json`]: createMockRefJson(snapshotId),
       });
 
@@ -256,10 +265,9 @@ describe('Repository', () => {
       expect(branches).toContain('main');
     });
 
-    it('should open repo with versioned main branch file', async () => {
+    it('should open repo with versioned main branch file (v1 format)', async () => {
       const snapshotId = createMockSnapshotId(1);
       const storage = new MockStorage({
-        // Only versioned branch file, no legacy ref.json
         [`${getBranchRefDirPath('main')}ZZZZZZZZ.json`]: createMockRefJson(snapshotId),
       });
 
@@ -269,9 +277,10 @@ describe('Repository', () => {
   });
 
   describe('checkoutBranch', () => {
-    it('should throw on non-existent branch', async () => {
+    it('should throw on non-existent branch (v1 format)', async () => {
+      const snapshotId = createMockSnapshotId(1);
       const storage = new MockStorage({
-        [REPO_INFO_PATH]: 'repo info',
+        [getBranchRefPath('main')]: createMockRefJson(snapshotId),
       });
 
       const repo = await Repository.open({ storage });
@@ -281,9 +290,10 @@ describe('Repository', () => {
       );
     });
 
-    it('should throw on invalid ref.json content', async () => {
+    it('should throw on invalid ref.json content (v1 format)', async () => {
+      const snapshotId = createMockSnapshotId(1);
       const storage = new MockStorage({
-        [REPO_INFO_PATH]: 'repo info',
+        [getBranchRefPath('main')]: createMockRefJson(snapshotId),
         [getBranchRefPath('broken')]: 'not valid json',
       });
 
@@ -292,10 +302,10 @@ describe('Repository', () => {
       await expect(repo.checkoutBranch('broken')).rejects.toThrow();
     });
 
-    it('should throw on deleted branch (with tombstone)', async () => {
+    it('should throw on deleted branch (with tombstone, v1 format)', async () => {
       const snapshotId = createMockSnapshotId(1);
       const storage = new MockStorage({
-        [REPO_INFO_PATH]: 'repo info',
+        [getBranchRefPath('main')]: createMockRefJson(snapshotId),
         // Deleted branch (ref file + tombstone)
         [`${getBranchRefDirPath('deleted')}ZZZZZZZZ.json`]: createMockRefJson(snapshotId),
         [`${getBranchRefDirPath('deleted')}ZZZZZZZZ.json.deleted`]: '',
@@ -310,9 +320,10 @@ describe('Repository', () => {
   });
 
   describe('checkoutTag', () => {
-    it('should throw on non-existent tag', async () => {
+    it('should throw on non-existent tag (v1 format)', async () => {
+      const snapshotId = createMockSnapshotId(1);
       const storage = new MockStorage({
-        [REPO_INFO_PATH]: 'repo info',
+        [getBranchRefPath('main')]: createMockRefJson(snapshotId),
       });
 
       const repo = await Repository.open({ storage });
@@ -322,10 +333,10 @@ describe('Repository', () => {
       );
     });
 
-    it('should throw on deleted tag (with tombstone)', async () => {
+    it('should throw on deleted tag (with tombstone, v1 format)', async () => {
       const snapshotId = createMockSnapshotId(1);
       const storage = new MockStorage({
-        [REPO_INFO_PATH]: 'repo info',
+        [getBranchRefPath('main')]: createMockRefJson(snapshotId),
         // Deleted tag (ref file + tombstone)
         [`${getTagRefDirPath('deleted')}ZZZZZZZZ.json`]: createMockRefJson(snapshotId),
         [`${getTagRefDirPath('deleted')}ZZZZZZZZ.json.deleted`]: '',
@@ -343,7 +354,7 @@ describe('Repository', () => {
     it('should accept Base32 string snapshot ID', async () => {
       const snapshotId = createMockSnapshotId(42);
       const storage = new MockStorage({
-        [REPO_INFO_PATH]: 'repo info',
+        [getBranchRefPath('main')]: createMockRefJson(snapshotId),
       });
 
       const repo = await Repository.open({ storage });
@@ -357,7 +368,7 @@ describe('Repository', () => {
     it('should accept Uint8Array snapshot ID', async () => {
       const snapshotId = createMockSnapshotId(42);
       const storage = new MockStorage({
-        [REPO_INFO_PATH]: 'repo info',
+        [getBranchRefPath('main')]: createMockRefJson(snapshotId),
       });
 
       const repo = await Repository.open({ storage });
@@ -365,6 +376,95 @@ describe('Repository', () => {
       // This will fail because the snapshot file doesn't exist,
       // but it validates that the Uint8Array is accepted
       await expect(repo.checkoutSnapshot(snapshotId)).rejects.toThrow();
+    });
+  });
+
+  describe('v2 format integration', () => {
+    /**
+     * Helper to create a MockStorage from a real v2 repository directory.
+     * Loads all files recursively into the mock storage.
+     */
+    function loadV2RepoIntoMockStorage(repoPath: string): MockStorage {
+      const files: Record<string, Uint8Array> = {};
+
+      function loadDir(dirPath: string, prefix: string = ''): void {
+        const entries = readdirSync(dirPath, { withFileTypes: true });
+        for (const entry of entries) {
+          const fullPath = join(dirPath, entry.name);
+          const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
+          if (entry.isDirectory()) {
+            loadDir(fullPath, relativePath);
+          } else {
+            files[relativePath] = readFileSync(fullPath);
+          }
+        }
+      }
+
+      loadDir(repoPath);
+      const storage = new MockStorage({});
+      for (const [path, data] of Object.entries(files)) {
+        storage.addFile(path, data);
+      }
+      return storage;
+    }
+
+    it('should open a real v2 repository', async () => {
+      const storage = loadV2RepoIntoMockStorage(TEST_REPO_V2_PATH);
+      const repo = await Repository.open({ storage });
+      expect(repo).toBeInstanceOf(Repository);
+    });
+
+    it('should list branches from real v2 repository', async () => {
+      const storage = loadV2RepoIntoMockStorage(TEST_REPO_V2_PATH);
+      const repo = await Repository.open({ storage });
+      const branches = await repo.listBranches();
+
+      expect(branches).toContain('main');
+      expect(Array.isArray(branches)).toBe(true);
+    });
+
+    it('should list tags from real v2 repository', async () => {
+      const storage = loadV2RepoIntoMockStorage(TEST_REPO_V2_PATH);
+      const repo = await Repository.open({ storage });
+      const tags = await repo.listTags();
+
+      expect(Array.isArray(tags)).toBe(true);
+    });
+
+    it('should checkout main branch from real v2 repository', async () => {
+      const storage = loadV2RepoIntoMockStorage(TEST_REPO_V2_PATH);
+      const repo = await Repository.open({ storage });
+
+      // This should not throw - the branch exists and resolves to a valid snapshot
+      const session = await repo.checkoutBranch('main');
+      expect(session).toBeDefined();
+    });
+
+    it('should throw on non-existent branch in v2 repository', async () => {
+      const storage = loadV2RepoIntoMockStorage(TEST_REPO_V2_PATH);
+      const repo = await Repository.open({ storage });
+
+      await expect(repo.checkoutBranch('nonexistent')).rejects.toThrow(
+        'Branch not found'
+      );
+    });
+
+    it('should throw on non-existent tag in v2 repository', async () => {
+      const storage = loadV2RepoIntoMockStorage(TEST_REPO_V2_PATH);
+      const repo = await Repository.open({ storage });
+
+      await expect(repo.checkoutTag('nonexistent')).rejects.toThrow(
+        'Tag not found'
+      );
+    });
+
+    it('should checkout existing tag from real v2 repository', async () => {
+      const storage = loadV2RepoIntoMockStorage(TEST_REPO_V2_PATH);
+      const repo = await Repository.open({ storage });
+
+      // This should not throw - the tag exists and resolves to a valid snapshot
+      const session = await repo.checkoutTag('it works!');
+      expect(session).toBeDefined();
     });
   });
 });

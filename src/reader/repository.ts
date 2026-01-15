@@ -13,6 +13,14 @@ import {
   REPO_INFO_PATH,
 } from '../format/constants.js';
 import { decodeObjectId12 } from '../format/object-id.js';
+import {
+  parseRepo,
+  resolveBranch,
+  resolveTag,
+  listBranchesFromRepo,
+  listTagsFromRepo,
+  type ParsedRepo,
+} from '../format/flatbuffers/repo-parser.js';
 import { ReadSession } from './session.js';
 
 /** Reference data stored in ref.json files */
@@ -36,13 +44,51 @@ export interface RepositoryOptions {
  */
 export class Repository {
   private storage: Storage;
+  private repoInfo: ParsedRepo | null = null;
+  private repoInfoAttempted = false;
 
   private constructor(storage: Storage) {
     this.storage = storage;
   }
 
   /**
+   * Load and cache the v2 repo info file.
+   *
+   * Uses getObject() directly to avoid race conditions with exists().
+   * - NotFoundError => v1 format (no repo file)
+   * - Any other error => hard error (parse failure, etc.)
+   *
+   * @returns ParsedRepo if v2 format, null if v1 format
+   * @throws Error if repo file exists but fails to parse
+   */
+  private async loadRepoInfo(): Promise<ParsedRepo | null> {
+    if (this.repoInfoAttempted) {
+      return this.repoInfo;
+    }
+    this.repoInfoAttempted = true;
+
+    try {
+      const data = await this.storage.getObject(REPO_INFO_PATH);
+      this.repoInfo = parseRepo(data);
+      return this.repoInfo;
+    } catch (error) {
+      // NotFoundError means v1 format (no repo file)
+      if (error instanceof NotFoundError) {
+        return null;
+      }
+      // Any other error is fatal
+      throw new Error(
+        `Failed to parse v2 repo file: ${error instanceof Error ? error.message : error}`
+      );
+    }
+  }
+
+  /**
    * Open an icechunk repository.
+   *
+   * - Try to load and parse repo info file (v2+ format)
+   * - If NotFoundError, check for main branch (v1 format)
+   * - Parse failures are hard errors (matching Rust behavior)
    *
    * @param options - Repository options including storage backend
    * @returns A Repository instance
@@ -50,15 +96,13 @@ export class Repository {
   static async open(options: RepositoryOptions): Promise<Repository> {
     const repo = new Repository(options.storage);
 
-    // Validation logic matches the Rust source of truth:
-    // 1. Check for repo info file (v2+ format)
-    // 2. Check for main branch (v1 format) - any .json file in the branch directory
-    const repoInfoExists = await options.storage.exists(REPO_INFO_PATH);
-    if (repoInfoExists) {
-      return repo;
+    // Try v2 format first - load and parse to fail fast on corruption
+    const repoInfo = await repo.loadRepoInfo();
+    if (repoInfo) {
+      return repo; // v2 format - repo file exists and parsed successfully
     }
 
-    // Check for main branch by looking for any .json file in the branch directory
+    // Check for main branch (v1 format) by looking for any .json file
     const mainBranchDir = getBranchRefDirPath('main');
     const mainExists = await repo.hasAnyRefFile(mainBranchDir, getBranchRefPath('main'));
     if (mainExists) {
@@ -171,6 +215,13 @@ export class Repository {
    * @returns Array of branch names
    */
   async listBranches(): Promise<string[]> {
+    // Try v2 format first
+    const repoInfo = await this.loadRepoInfo();
+    if (repoInfo) {
+      return listBranchesFromRepo(repoInfo);
+    }
+
+    // V1 fallback - file-based lookup
     // Track files per branch: branch name -> { jsonFiles, deletedFiles }
     const branchFiles = new Map<string, { jsonFiles: string[]; deletedFiles: Set<string> }>();
     let listingSupported = true;
@@ -242,6 +293,13 @@ export class Repository {
    * @returns Array of tag names
    */
   async listTags(): Promise<string[]> {
+    // Try v2 format first
+    const repoInfo = await this.loadRepoInfo();
+    if (repoInfo) {
+      return listTagsFromRepo(repoInfo);
+    }
+
+    // V1 fallback - file-based lookup
     // Track files per tag: tag name -> { jsonFiles, deletedFiles }
     const tagFiles = new Map<string, { jsonFiles: string[]; deletedFiles: Set<string> }>();
 
@@ -299,6 +357,17 @@ export class Repository {
    * @returns Read session at the branch's current snapshot
    */
   async checkoutBranch(name: string): Promise<ReadSession> {
+    // Try v2 format first
+    const repoInfo = await this.loadRepoInfo();
+    if (repoInfo) {
+      const snapshotId = resolveBranch(repoInfo, name);
+      if (!snapshotId) {
+        throw new Error(`Branch not found: ${name}`);
+      }
+      return ReadSession.open(this.storage, snapshotId);
+    }
+
+    // V1 fallback - file-based lookup
     const refDirPath = getBranchRefDirPath(name);
     const refPath = await this.findLatestRefFile(refDirPath, getBranchRefPath(name));
     if (!refPath) {
@@ -315,6 +384,17 @@ export class Repository {
    * @returns Read session at the tag's snapshot
    */
   async checkoutTag(name: string): Promise<ReadSession> {
+    // Try v2 format first
+    const repoInfo = await this.loadRepoInfo();
+    if (repoInfo) {
+      const snapshotId = resolveTag(repoInfo, name);
+      if (!snapshotId) {
+        throw new Error(`Tag not found: ${name}`);
+      }
+      return ReadSession.open(this.storage, snapshotId);
+    }
+
+    // V1 fallback - file-based lookup
     const refDirPath = getTagRefDirPath(name);
     const refPath = await this.findLatestRefFile(refDirPath, getTagRefPath(name));
     if (!refPath) {
