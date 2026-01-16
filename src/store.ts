@@ -47,6 +47,9 @@ export interface IcechunkStoreOptions {
 
   /** AbortSignal for cancelling initialization */
   signal?: AbortSignal;
+
+  /** Format version hint to skip auto-detection. 'v1' skips /repo request. */
+  formatVersion?: 'v1' | 'v2';
 }
 
 /**
@@ -112,7 +115,7 @@ export class IcechunkStore implements AsyncReadable {
   ): Promise<ReadSession> {
     const storage = typeof arg === 'string' ? new HttpStorage(arg) : arg;
     const requestOptions = options.signal ? { signal: options.signal } : undefined;
-    const repo = await Repository.open({ storage }, requestOptions);
+    const repo = await Repository.open({ storage, formatVersion: options.formatVersion }, requestOptions);
 
     let session: ReadSession;
     if (options.snapshot) {

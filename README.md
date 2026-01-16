@@ -43,19 +43,12 @@ interface.
 ```typescript
 import { IcechunkStore } from "icechunk-js";
 
-// From a URL (uses HttpStorage internally)
-const store = new IcechunkStore("https://example.com/repo");
-
-// With options
 const store = new IcechunkStore("https://example.com/repo", {
-  branch: "main", // checkout a branch (default)
-  // tag: 'v1.0',      // or checkout a tag
-  // snapshot: 'ABC123...',  // or checkout a specific snapshot ID
-  // signal: controller.signal,  // AbortSignal for init cancellation
+  branch: "main", // default; or use tag/snapshot
+  // tag: 'v1.0',
+  // snapshot: 'ABC123...',
+  // formatVersion: 'v1',  // skip format auto-detection for v1 repos
 });
-
-// From a custom Storage backend
-const store = new IcechunkStore(storage, { branch: "develop" });
 ```
 
 ### Repository
@@ -66,7 +59,12 @@ For direct access to branches, tags, and checkouts.
 import { Repository, HttpStorage } from "icechunk-js";
 
 const storage = new HttpStorage("https://example.com/repo");
+
+// Auto-detect format (default)
 const repo = await Repository.open({ storage });
+
+// Or with format version hint (skips /repo request for v1 stores)
+// const repo = await Repository.open({ storage, formatVersion: 'v1' });
 
 // List branches and tags
 const branches = await repo.listBranches();
@@ -74,8 +72,8 @@ const tags = await repo.listTags();
 
 // Checkout to get a ReadSession
 const session = await repo.checkoutBranch("main");
-const session = await repo.checkoutTag("v1.0");
-const session = await repo.checkoutSnapshot("ABCDEFGHIJKLMNOP");
+// or: repo.checkoutTag('v1.0')
+// or: repo.checkoutSnapshot('ABCDEFGHIJKLMNOP')
 ```
 
 ### ReadSession
@@ -126,7 +124,8 @@ class MyStorage implements Storage {
 }
 ```
 
-The `RequestOptions` type contains an optional `signal: AbortSignal` for cancellation support.
+The `RequestOptions` type contains an optional `signal: AbortSignal` for
+cancellation support.
 
 ## License
 

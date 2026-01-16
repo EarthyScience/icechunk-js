@@ -33,6 +33,8 @@ export interface RefData {
 export interface RepositoryOptions {
   /** Storage backend to use */
   storage: Storage;
+  /** Format version hint to skip auto-detection. 'v1' skips /repo request. */
+  formatVersion?: 'v1' | 'v2';
 }
 
 /**
@@ -104,10 +106,18 @@ export class Repository {
   static async open(options: RepositoryOptions, requestOptions?: RequestOptions): Promise<Repository> {
     const repo = new Repository(options.storage);
 
-    // Try v2 format first - load and parse to fail fast on corruption
-    const repoInfo = await repo.loadRepoInfo(requestOptions);
-    if (repoInfo) {
-      return repo; // v2 format - repo file exists and parsed successfully
+    if (options.formatVersion === 'v1') {
+      // Skip v2 detection entirely - mark repoInfoAttempted to prevent later calls
+      repo.repoInfoAttempted = true;
+    } else {
+      // Try v2 format first - load and parse to fail fast on corruption
+      const repoInfo = await repo.loadRepoInfo(requestOptions);
+      if (repoInfo) {
+        return repo; // v2 format - repo file exists and parsed successfully
+      }
+      if (options.formatVersion === 'v2') {
+        throw new Error('Repository info not found but v2 format was specified');
+      }
     }
 
     // Check for main branch (v1 format) by looking for any .json file
@@ -142,13 +152,7 @@ export class Repository {
       if (error instanceof AbortError) {
         throw error;
       }
-      // Listing not supported - try fallback paths
-      // First try the versioned filename
-      const versionedPath = `${dirPrefix}ZZZZZZZZ.json`;
-      if (await this.storage.exists(versionedPath, options)) {
-        return true;
-      }
-      // Then try legacy path if provided
+      // Listing not supported - try legacy path only
       if (legacyPath) {
         return await this.storage.exists(legacyPath, options);
       }
@@ -158,8 +162,12 @@ export class Repository {
 
   /**
    * Find the latest non-deleted ref file in a directory.
-   * Icechunk uses lexicographically sortable versioned filenames (e.g., ZZZZZZZZ.json)
-   * for optimistic concurrency control. The latest version has the highest filename.
+   * When storage supports listPrefix(), refs may use versioned filenames
+   * (e.g., AAAAAAAA.json) for optimistic concurrency control. The latest
+   * version has the highest filename.
+   *
+   * When listing is not supported (e.g., HTTP storage), only the legacy
+   * ref.json path is checked.
    *
    * Deletion is indicated by a tombstone file (e.g., ABC.json.deleted alongside ABC.json).
    * A ref is considered deleted if its latest version has a corresponding tombstone.
@@ -186,17 +194,7 @@ export class Repository {
       if (error instanceof AbortError) {
         throw error;
       }
-      // Listing not supported - try fallback paths
-      // First try the versioned filename used by local filesystem storage
-      const versionedPath = `${dirPrefix}ZZZZZZZZ.json`;
-      if (await this.storage.exists(versionedPath, options)) {
-        // Check for deletion tombstone
-        if (await this.storage.exists(`${versionedPath}.deleted`, options)) {
-          return null;
-        }
-        return versionedPath;
-      }
-      // Then try the legacy ref.json path
+      // Listing not supported - try legacy path only
       if (legacyPath && await this.storage.exists(legacyPath, options)) {
         // Check for deletion tombstone
         if (await this.storage.exists(`${legacyPath}.deleted`, options)) {

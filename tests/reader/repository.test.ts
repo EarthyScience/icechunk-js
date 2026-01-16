@@ -253,18 +253,6 @@ describe('Repository', () => {
   });
 
   describe('ref resolution edge cases', () => {
-    it('should find versioned ref file over legacy ref.json in fallback mode (v1 format)', async () => {
-      const snapshotId = createMockSnapshotId(1);
-      const storage = new MockStorageNoList({
-        [`${getBranchRefDirPath('main')}ZZZZZZZZ.json`]: createMockRefJson(snapshotId),
-      });
-
-      const repo = await Repository.open({ storage });
-      const branches = await repo.listBranches();
-
-      expect(branches).toContain('main');
-    });
-
     it('should open repo with versioned main branch file (v1 format)', async () => {
       const snapshotId = createMockSnapshotId(1);
       const storage = new MockStorage({
@@ -465,6 +453,57 @@ describe('Repository', () => {
       // This should not throw - the tag exists and resolves to a valid snapshot
       const session = await repo.checkoutTag('it works!');
       expect(session).toBeDefined();
+    });
+  });
+
+  describe('formatVersion hint', () => {
+    it('should skip /repo request when formatVersion is v1', async () => {
+      const snapshotId = createMockSnapshotId(1);
+      const storage = new MockStorageNoList({
+        [getBranchRefPath('main')]: createMockRefJson(snapshotId),
+      });
+
+      await Repository.open({ storage, formatVersion: 'v1' });
+
+      // Should not have requested 'repo'
+      expect(storage.requestLog).not.toContain(`getObject:${REPO_INFO_PATH}`);
+      // Should have checked main branch
+      expect(storage.requestLog).toContain(`exists:${getBranchRefPath('main')}`);
+    });
+
+    it('should still request /repo when formatVersion is not specified', async () => {
+      const snapshotId = createMockSnapshotId(1);
+      const storage = new MockStorageNoList({
+        [getBranchRefPath('main')]: createMockRefJson(snapshotId),
+      });
+
+      await Repository.open({ storage });
+
+      // Should have requested 'repo' (and got 404)
+      expect(storage.requestLog).toContain(`getObject:${REPO_INFO_PATH}`);
+    });
+
+    it('should throw when formatVersion is v2 but repo file missing', async () => {
+      const snapshotId = createMockSnapshotId(1);
+      const storage = new MockStorage({
+        [getBranchRefPath('main')]: createMockRefJson(snapshotId),
+      });
+
+      await expect(
+        Repository.open({ storage, formatVersion: 'v2' })
+      ).rejects.toThrow('v2 format was specified');
+    });
+
+    it('should throw parse error (not "v2 specified") when repo file exists but is invalid', async () => {
+      // Create a v2 repo with invalid repo file
+      const storage = new MockStorage({
+        [REPO_INFO_PATH]: new Uint8Array([0]), // Invalid content
+      });
+
+      // Should throw parse error, not "v2 format was specified" error
+      await expect(
+        Repository.open({ storage, formatVersion: 'v2' })
+      ).rejects.toThrow('Failed to parse v2 repo file');
     });
   });
 });

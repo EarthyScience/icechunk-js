@@ -22,8 +22,11 @@ export const REPO_INFO_PATH = 'repo';
 
 /**
  * Get the storage path prefix for a branch ref directory.
- * The actual ref file may be named with a version suffix (e.g., ZZZZZZZZ.json)
- * for optimistic concurrency control on storage backends without native versioning.
+ *
+ * When storage supports listPrefix(), refs may use versioned filenames
+ * (e.g., AAAAAAAA.json) for optimistic concurrency control. When listing
+ * is not supported (e.g., HTTP storage), only the legacy ref.json path
+ * is checked.
  *
  * @param name - Branch name
  * @returns Path to the branch ref directory (with trailing slash)
@@ -34,7 +37,10 @@ export function getBranchRefDirPath(name: string): string {
 
 /**
  * Get the storage path prefix for a tag ref directory.
- * The actual ref file may be named with a version suffix.
+ *
+ * When storage supports listPrefix(), refs may use versioned filenames.
+ * When listing is not supported (e.g., HTTP storage), only the legacy
+ * ref.json path is checked.
  *
  * @param name - Tag name
  * @returns Path to the tag ref directory (with trailing slash)
@@ -44,9 +50,10 @@ export function getTagRefDirPath(name: string): string {
 }
 
 /**
- * Default ref file name for testing and legacy compatibility.
- * In production, refs are stored with versioned filenames (e.g., ZZZZZZZZ.json)
- * for optimistic concurrency control.
+ * Default ref file name for legacy compatibility.
+ * When storage supports listPrefix(), refs may use versioned filenames
+ * for optimistic concurrency control. When listing is not supported,
+ * this legacy filename is used as the fallback.
  */
 export const REF_FILE_NAME = 'ref.json';
 

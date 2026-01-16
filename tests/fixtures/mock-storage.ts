@@ -28,14 +28,26 @@ export interface MockFiles {
  */
 export class MockStorage implements Storage {
   private files: Map<string, Uint8Array> = new Map();
+  private _requestLog: string[] = [];
 
   constructor(files: MockFiles = {}) {
     this.setFiles(files);
   }
 
-  /** Set files in the mock storage */
+  /** Get log of all paths requested via getObject/exists */
+  get requestLog(): readonly string[] {
+    return this._requestLog;
+  }
+
+  /** Clear the request log */
+  clearRequestLog(): void {
+    this._requestLog = [];
+  }
+
+  /** Set files in the mock storage (also clears request log) */
   setFiles(files: MockFiles): void {
     this.files.clear();
+    this._requestLog = [];
     for (const [path, data] of Object.entries(files)) {
       if (data instanceof Uint8Array) {
         this.files.set(path, data);
@@ -64,6 +76,7 @@ export class MockStorage implements Storage {
   }
 
   async getObject(path: string, range?: ByteRange, _options?: RequestOptions): Promise<Uint8Array> {
+    this._requestLog.push(`getObject:${path}`);
     const data = this.files.get(path);
     if (!data) {
       throw new NotFoundError(`Object not found: ${path}`);
@@ -77,6 +90,7 @@ export class MockStorage implements Storage {
   }
 
   async exists(path: string, _options?: RequestOptions): Promise<boolean> {
+    this._requestLog.push(`exists:${path}`);
     return this.files.has(path);
   }
 
