@@ -107,20 +107,21 @@ export class Repository {
     const repo = new Repository(options.storage);
 
     if (options.formatVersion === 'v1') {
-      // Skip v2 detection entirely - mark repoInfoAttempted to prevent later calls
+      // User asserts v1 format - skip all validation, defer errors to checkout
       repo.repoInfoAttempted = true;
-    } else {
-      // Try v2 format first - load and parse to fail fast on corruption
-      const repoInfo = await repo.loadRepoInfo(requestOptions);
-      if (repoInfo) {
-        return repo; // v2 format - repo file exists and parsed successfully
-      }
-      if (options.formatVersion === 'v2') {
-        throw new Error('Repository info not found but v2 format was specified');
-      }
+      return repo;
     }
 
-    // Check for main branch (v1 format) by looking for any .json file
+    // Try v2 format first - load and parse to fail fast on corruption
+    const repoInfo = await repo.loadRepoInfo(requestOptions);
+    if (repoInfo) {
+      return repo; // v2 format - repo file exists and parsed successfully
+    }
+    if (options.formatVersion === 'v2') {
+      throw new Error('Repository info not found but v2 format was specified');
+    }
+
+    // Auto-detect: check for main branch (v1 format)
     const mainBranchDir = getBranchRefDirPath('main');
     const mainExists = await repo.hasAnyRefFile(mainBranchDir, getBranchRefPath('main'), requestOptions);
     if (mainExists) {
@@ -164,13 +165,10 @@ export class Repository {
    * Find the latest non-deleted ref file in a directory.
    * When storage supports listPrefix(), refs may use versioned filenames
    * (e.g., AAAAAAAA.json) for optimistic concurrency control. The latest
-   * version has the highest filename.
+   * version has the highest filename. Deletion tombstones are checked.
    *
    * When listing is not supported (e.g., HTTP storage), only the legacy
-   * ref.json path is checked.
-   *
-   * Deletion is indicated by a tombstone file (e.g., ABC.json.deleted alongside ABC.json).
-   * A ref is considered deleted if its latest version has a corresponding tombstone.
+   * ref.json path is checked (no tombstone check - assumes read-only).
    *
    * @param dirPrefix - Directory prefix to search
    * @param legacyPath - Optional legacy ref.json path to try if listing fails
@@ -194,15 +192,9 @@ export class Repository {
       if (error instanceof AbortError) {
         throw error;
       }
-      // Listing not supported - try legacy path only
-      if (legacyPath && await this.storage.exists(legacyPath, options)) {
-        // Check for deletion tombstone
-        if (await this.storage.exists(`${legacyPath}.deleted`, options)) {
-          return null;
-        }
-        return legacyPath;
-      }
-      return null;
+      // Listing not supported - return legacy path without checking exists.
+      // Caller will handle NotFoundError when reading.
+      return legacyPath || null;
     }
 
     if (jsonFiles.length === 0) {
@@ -240,7 +232,6 @@ export class Repository {
     // V1 fallback - file-based lookup
     // Track files per branch: branch name -> { jsonFiles, deletedFiles }
     const branchFiles = new Map<string, { jsonFiles: string[]; deletedFiles: Set<string> }>();
-    let listingSupported = true;
 
     try {
       for await (const path of this.storage.listPrefix(`${PATHS.REFS}/branch.`)) {
@@ -267,20 +258,7 @@ export class Repository {
         }
       }
     } catch {
-      // Listing not supported
-      listingSupported = false;
-    }
-
-    // Fallback: try common branch names by checking if files exist
-    if (!listingSupported) {
-      const result: string[] = [];
-      for (const name of ['main', 'master']) {
-        const refPath = await this.findLatestRefFile(getBranchRefDirPath(name), getBranchRefPath(name));
-        if (refPath) {
-          result.push(name);
-        }
-      }
-      return result;
+      throw new Error('Cannot list branches: storage does not support listing');
     }
 
     // Filter to only include branches where latest ref is not deleted
@@ -344,8 +322,7 @@ export class Repository {
         }
       }
     } catch {
-      // If listing not supported, can't enumerate tags
-      return [];
+      throw new Error('Cannot list tags: storage does not support listing');
     }
 
     // Filter to only include tags where latest ref is not deleted
@@ -414,10 +391,18 @@ export class Repository {
 
     // V1 fallback - file-based lookup
     const refDirPath = getTagRefDirPath(name);
-    const refPath = await this.findLatestRefFile(refDirPath, getTagRefPath(name), options);
+    const legacyPath = getTagRefPath(name);
+    const refPath = await this.findLatestRefFile(refDirPath, legacyPath, options);
     if (!refPath) {
       throw new Error(`Reference not found: ${refDirPath}`);
     }
+
+    // Check for tombstone only in no-list fallback path (list-capable storage
+    // already handles tombstones in findLatestRefFile). Matches Rust behavior.
+    if (refPath === legacyPath && await this.storage.exists(`${refPath}.deleted`, options)) {
+      throw new Error(`Tag not found: ${name}`);
+    }
+
     const snapshotId = await this.readSnapshotIdFromRef(refPath, options);
     return ReadSession.open(this.storage, snapshotId, options);
   }
