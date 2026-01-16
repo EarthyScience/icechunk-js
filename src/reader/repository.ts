@@ -172,9 +172,8 @@ export class Repository {
    *
    * @param dirPrefix - Directory prefix to search
    * @param legacyPath - Optional legacy ref.json path to try if listing fails
-   * @param options - Optional request options (signal for cancellation)
    */
-  private async findLatestRefFile(dirPrefix: string, legacyPath?: string, options?: RequestOptions): Promise<string | null> {
+  private async findLatestRefFile(dirPrefix: string, legacyPath?: string): Promise<string | null> {
     const jsonFiles: string[] = [];
     const deletedFiles = new Set<string>();
 
@@ -363,7 +362,7 @@ export class Repository {
 
     // V1 fallback - file-based lookup
     const refDirPath = getBranchRefDirPath(name);
-    const refPath = await this.findLatestRefFile(refDirPath, getBranchRefPath(name), options);
+    const refPath = await this.findLatestRefFile(refDirPath, getBranchRefPath(name));
     if (!refPath) {
       throw new Error(`Reference not found: ${refDirPath}`);
     }
@@ -392,7 +391,7 @@ export class Repository {
     // V1 fallback - file-based lookup
     const refDirPath = getTagRefDirPath(name);
     const legacyPath = getTagRefPath(name);
-    const refPath = await this.findLatestRefFile(refDirPath, legacyPath, options);
+    const refPath = await this.findLatestRefFile(refDirPath, legacyPath);
     if (!refPath) {
       throw new Error(`Reference not found: ${refDirPath}`);
     }
