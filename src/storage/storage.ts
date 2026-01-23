@@ -11,10 +11,47 @@ export interface ByteRange {
   end: number;
 }
 
+/** Options passed to the transformRequest callback */
+export interface TransformRequestOptions {
+  /** HTTP method for the request */
+  method?: 'GET' | 'HEAD';
+}
+
+/** Result returned by the transformRequest callback */
+export interface TransformRequestResult {
+  /** The (possibly transformed) URL to fetch */
+  url: string;
+  /** Additional headers to include in the request */
+  headers?: Record<string, string>;
+  /** HTTP method to use (defaults to GET) */
+  method?: 'GET' | 'HEAD';
+  /** Allow other RequestInit options to be passed through */
+  [key: string]: unknown;
+}
+
+/**
+ * Callback to transform virtual chunk URLs before fetching.
+ *
+ * Use this to:
+ * - Generate pre-signed S3 URLs
+ * - Add authentication headers
+ * - Route through a proxy
+ *
+ * @param url - The URL after default translation (e.g., s3:// → https://)
+ * @param options - Request options including HTTP method
+ * @returns Transformed URL and optional headers/RequestInit options
+ */
+export type TransformRequest = (
+  url: string,
+  options?: TransformRequestOptions
+) => TransformRequestResult | Promise<TransformRequestResult>;
+
 /** Options for storage request operations */
 export interface RequestOptions {
   /** AbortSignal for request cancellation */
   signal?: AbortSignal;
+  /** Callback to transform virtual chunk URLs before fetching */
+  transformRequest?: TransformRequest;
 }
 
 /** Error thrown when an object is not found */

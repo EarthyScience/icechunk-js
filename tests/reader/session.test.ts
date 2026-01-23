@@ -399,8 +399,237 @@ describe('ReadSession', () => {
 
       expect(fetchSpy).toHaveBeenCalledWith('https://example.com/data.bin', {
         headers: { Range: 'bytes=100-104' },
+        signal: undefined,
       });
       expect(result).toEqual(mockData);
+
+      fetchSpy.mockRestore();
+    });
+
+    it('should call transformRequest with correct URL and options', async () => {
+      const mockData = new Uint8Array([1, 2, 3]);
+      const mockResponse = {
+        ok: true,
+        status: 206,
+        arrayBuffer: vi.fn().mockResolvedValue(mockData.buffer),
+      };
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(mockResponse as any);
+
+      const session = createMockSession({ nodes: [] }) as any;
+
+      const transformRequest = vi.fn().mockReturnValue({
+        url: 'https://example.com/data.bin',
+      });
+
+      const payload = {
+        type: 'virtual' as const,
+        location: 'https://example.com/data.bin',
+        offset: 0,
+        length: 10,
+        checksumEtag: null,
+        checksumLastModified: 0,
+      };
+
+      await session.fetchChunkPayload(payload, { transformRequest });
+
+      expect(transformRequest).toHaveBeenCalledWith(
+        'https://example.com/data.bin',
+        { method: 'GET' }
+      );
+
+      fetchSpy.mockRestore();
+    });
+
+    it('should merge headers from transformRequest', async () => {
+      const mockData = new Uint8Array([1, 2, 3]);
+      const mockResponse = {
+        ok: true,
+        status: 206,
+        arrayBuffer: vi.fn().mockResolvedValue(mockData.buffer),
+      };
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(mockResponse as any);
+
+      const session = createMockSession({ nodes: [] }) as any;
+
+      const transformRequest = vi.fn().mockReturnValue({
+        url: 'https://example.com/data.bin',
+        headers: {
+          'Authorization': 'Bearer token123',
+          'X-Custom-Header': 'value',
+        },
+      });
+
+      const payload = {
+        type: 'virtual' as const,
+        location: 'https://example.com/data.bin',
+        offset: 50,
+        length: 20,
+        checksumEtag: null,
+        checksumLastModified: 0,
+      };
+
+      await session.fetchChunkPayload(payload, { transformRequest });
+
+      expect(fetchSpy).toHaveBeenCalledWith('https://example.com/data.bin', {
+        headers: {
+          Range: 'bytes=50-69',
+          'Authorization': 'Bearer token123',
+          'X-Custom-Header': 'value',
+        },
+        signal: undefined,
+      });
+
+      fetchSpy.mockRestore();
+    });
+
+    it('should use transformed URL from transformRequest', async () => {
+      const mockData = new Uint8Array([1, 2, 3]);
+      const mockResponse = {
+        ok: true,
+        status: 206,
+        arrayBuffer: vi.fn().mockResolvedValue(mockData.buffer),
+      };
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(mockResponse as any);
+
+      const session = createMockSession({ nodes: [] }) as any;
+
+      const transformRequest = vi.fn().mockReturnValue({
+        url: 'https://proxy.example.com/data.bin?signed=abc123',
+      });
+
+      const payload = {
+        type: 'virtual' as const,
+        location: 's3://bucket/data.bin',
+        offset: 0,
+        length: 10,
+        checksumEtag: null,
+        checksumLastModified: 0,
+      };
+
+      await session.fetchChunkPayload(payload, { transformRequest });
+
+      // transformRequest receives the already-translated URL
+      expect(transformRequest).toHaveBeenCalledWith(
+        'https://bucket.s3.amazonaws.com/data.bin',
+        { method: 'GET' }
+      );
+
+      // fetch uses the transformed URL
+      expect(fetchSpy).toHaveBeenCalledWith('https://proxy.example.com/data.bin?signed=abc123', expect.anything());
+
+      fetchSpy.mockRestore();
+    });
+
+    it('should work with async transformRequest', async () => {
+      const mockData = new Uint8Array([1, 2, 3]);
+      const mockResponse = {
+        ok: true,
+        status: 206,
+        arrayBuffer: vi.fn().mockResolvedValue(mockData.buffer),
+      };
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(mockResponse as any);
+
+      const session = createMockSession({ nodes: [] }) as any;
+
+      const transformRequest = vi.fn().mockResolvedValue({
+        url: 'https://signed.example.com/data.bin',
+        headers: { 'X-Signed': 'yes' },
+      });
+
+      const payload = {
+        type: 'virtual' as const,
+        location: 'https://example.com/data.bin',
+        offset: 0,
+        length: 10,
+        checksumEtag: null,
+        checksumLastModified: 0,
+      };
+
+      await session.fetchChunkPayload(payload, { transformRequest });
+
+      expect(fetchSpy).toHaveBeenCalledWith('https://signed.example.com/data.bin', {
+        headers: {
+          Range: 'bytes=0-9',
+          'X-Signed': 'yes',
+        },
+        signal: undefined,
+      });
+
+      fetchSpy.mockRestore();
+    });
+
+    it('should ignore method override from transformRequest (HEAD would corrupt data)', async () => {
+      const mockData = new Uint8Array([1, 2, 3]);
+      const mockResponse = {
+        ok: true,
+        status: 206,
+        arrayBuffer: vi.fn().mockResolvedValue(mockData.buffer),
+      };
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(mockResponse as any);
+
+      const session = createMockSession({ nodes: [] }) as any;
+
+      // Even if callback returns method: 'HEAD', it should be ignored
+      // because HEAD responses have no body and would corrupt chunk reads
+      const transformRequest = vi.fn().mockReturnValue({
+        url: 'https://example.com/data.bin',
+        method: 'HEAD', // This should be ignored
+      });
+
+      const payload = {
+        type: 'virtual' as const,
+        location: 'https://example.com/data.bin',
+        offset: 0,
+        length: 10,
+        checksumEtag: null,
+        checksumLastModified: 0,
+      };
+
+      await session.fetchChunkPayload(payload, { transformRequest });
+
+      // method should NOT be set (defaults to GET)
+      expect(fetchSpy).toHaveBeenCalledWith('https://example.com/data.bin', {
+        headers: { Range: 'bytes=0-9' },
+        signal: undefined,
+      });
+
+      fetchSpy.mockRestore();
+    });
+
+    it('should merge other RequestInit options from transformRequest', async () => {
+      const mockData = new Uint8Array([1, 2, 3]);
+      const mockResponse = {
+        ok: true,
+        status: 206,
+        arrayBuffer: vi.fn().mockResolvedValue(mockData.buffer),
+      };
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(mockResponse as any);
+
+      const session = createMockSession({ nodes: [] }) as any;
+
+      const transformRequest = vi.fn().mockReturnValue({
+        url: 'https://example.com/data.bin',
+        credentials: 'include',
+        mode: 'cors',
+      });
+
+      const payload = {
+        type: 'virtual' as const,
+        location: 'https://example.com/data.bin',
+        offset: 0,
+        length: 10,
+        checksumEtag: null,
+        checksumLastModified: 0,
+      };
+
+      await session.fetchChunkPayload(payload, { transformRequest });
+
+      expect(fetchSpy).toHaveBeenCalledWith('https://example.com/data.bin', {
+        headers: { Range: 'bytes=0-9' },
+        signal: undefined,
+        credentials: 'include',
+        mode: 'cors',
+      });
 
       fetchSpy.mockRestore();
     });
@@ -425,7 +654,7 @@ describe('ReadSession', () => {
       };
 
       await expect(session.fetchChunkPayload(payload)).rejects.toThrow(
-        'Failed to fetch virtual chunk: 500 Internal Server Error'
+        'Failed to fetch virtual chunk from https://example.com/bad.bin: 500 Internal Server Error'
       );
 
       fetchSpy.mockRestore();
@@ -451,7 +680,7 @@ describe('ReadSession', () => {
       };
 
       await expect(session.fetchChunkPayload(payload)).rejects.toThrow(
-        'Failed to fetch virtual chunk: 404 Not Found'
+        'Failed to fetch virtual chunk from https://example.com/missing.bin: 404 Not Found'
       );
 
       fetchSpy.mockRestore();

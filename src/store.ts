@@ -8,7 +8,7 @@
 import { Repository } from './reader/repository.js';
 import { ReadSession } from './reader/session.js';
 import { HttpStorage } from './storage/http-storage.js';
-import type { Storage } from './storage/storage.js';
+import type { Storage, TransformRequest } from './storage/storage.js';
 
 /**
  * zarrita's AbsolutePath type - paths must start with "/"
@@ -50,6 +50,16 @@ export interface IcechunkStoreOptions {
 
   /** Format version hint to skip auto-detection. 'v1' skips /repo request. */
   formatVersion?: 'v1' | 'v2';
+
+  /**
+   * Callback to transform virtual chunk URLs before fetching.
+   *
+   * Use this to:
+   * - Generate pre-signed S3 URLs
+   * - Add authentication headers
+   * - Route through a proxy
+   */
+  transformRequest?: TransformRequest;
 }
 
 /**
@@ -71,6 +81,7 @@ export interface IcechunkStoreOptions {
 export class IcechunkStore implements AsyncReadable {
   private sessionPromise: Promise<ReadSession>;
   private session: ReadSession | null = null;
+  private transformRequest?: TransformRequest;
 
   /**
    * Create an IcechunkStore from a URL.
@@ -84,8 +95,9 @@ export class IcechunkStore implements AsyncReadable {
    * Create an IcechunkStore from an existing ReadSession.
    *
    * @param session - Existing ReadSession
+   * @param options - Store options (only transformRequest is used)
    */
-  constructor(session: ReadSession);
+  constructor(session: ReadSession, options?: Pick<IcechunkStoreOptions, 'transformRequest'>);
 
   /**
    * Create an IcechunkStore from a custom Storage backend.
@@ -99,6 +111,8 @@ export class IcechunkStore implements AsyncReadable {
     arg: string | ReadSession | Storage,
     options: IcechunkStoreOptions = {}
   ) {
+    this.transformRequest = options.transformRequest;
+
     if (arg instanceof ReadSession) {
       // Already have a session
       this.session = arg;
@@ -164,9 +178,10 @@ export class IcechunkStore implements AsyncReadable {
         return data ?? undefined;
       }
 
-      // Chunk key - propagate signal to session
+      // Chunk key - propagate signal and transformRequest to session
       const chunk = await session.getChunk(parsed.path, parsed.coords, {
         signal: opts?.signal,
+        transformRequest: this.transformRequest,
       });
       return chunk ?? undefined;
     } catch {

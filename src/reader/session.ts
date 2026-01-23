@@ -298,15 +298,33 @@ export class ReadSession {
 
       case 'virtual': {
         // Virtual chunks reference external URLs
-        // For now, use fetch directly (could be improved with virtual resolvers)
+        // Translate cloud storage URLs to HTTPS endpoints
+        let httpUrl = translateToHttpUrl(payload.location);
+        let fetchInit: RequestInit = {
+          headers: {
+            Range: `bytes=${payload.offset}-${payload.offset + payload.length - 1}`,
+          },
+          signal: options?.signal,
+        };
+
+        // If transformRequest provided, let it override URL and add options
+        if (options?.transformRequest) {
+          const result = await options.transformRequest(httpUrl, { method: 'GET' });
+          httpUrl = result.url;
+          if (result.headers) {
+            fetchInit.headers = { ...fetchInit.headers, ...result.headers };
+          }
+          // Note: method override is intentionally ignored for virtual chunk fetches.
+          // HEAD requests would return empty body, silently corrupting chunk data.
+          // The method in TransformRequestOptions is informational only (for signed URL generation).
+          // Merge other RequestInit options (excluding url, headers, method)
+          const { url: _, headers: __, method: ___, ...rest } = result;
+          fetchInit = { ...fetchInit, ...rest };
+        }
+
         let response: Response;
         try {
-          response = await fetch(payload.location, {
-            headers: {
-              Range: `bytes=${payload.offset}-${payload.offset + payload.length - 1}`,
-            },
-            signal: options?.signal,
-          });
+          response = await fetch(httpUrl, fetchInit);
         } catch (error) {
           // Translate abort errors to our class (handles DOMException and other implementations)
           if (error instanceof Error && error.name === 'AbortError') {
@@ -317,7 +335,7 @@ export class ReadSession {
 
         if (!response.ok && response.status !== 206) {
           throw new Error(
-            `Failed to fetch virtual chunk: ${response.status} ${response.statusText}`
+            `Failed to fetch virtual chunk from ${httpUrl}: ${response.status} ${response.statusText}`
           );
         }
 
@@ -371,4 +389,58 @@ function compareUtf8Bytes(a: string, b: string): number {
   }
 
   return bytesA.length - bytesB.length;
+}
+
+/**
+ * Translate cloud storage URLs to HTTP(S) endpoints for public buckets.
+ *
+ * Supports:
+ * - s3://bucket/key → https://bucket.s3.amazonaws.com/key (or path-style for dotted buckets)
+ * - gs://bucket/key or gcs://bucket/key → https://storage.googleapis.com/bucket/key
+ * - http(s):// URLs pass through unchanged
+ *
+ * NOT supported (passed through unchanged, will fail):
+ * - az:// (Azure) - requires storage account name which is not in the URL
+ * - Private buckets - require credentials or pre-signed URLs
+ *
+ * Note: S3 URLs use virtual-hosted style for simple bucket names, but fall back to
+ * path-style for buckets containing dots (which break SSL certificate validation).
+ * For buckets in specific regions, S3 will redirect to the correct endpoint.
+ */
+function translateToHttpUrl(url: string): string {
+  // S3: s3://bucket/key → https://bucket.s3.amazonaws.com/key
+  // For buckets with dots, use path-style: https://s3.amazonaws.com/bucket/key
+  if (url.startsWith('s3://')) {
+    const rest = url.slice(5); // Remove 's3://'
+    const slashIndex = rest.indexOf('/');
+    if (slashIndex === -1) {
+      // Just bucket, no key
+      const bucket = rest;
+      if (bucket.includes('.')) {
+        return `https://s3.amazonaws.com/${bucket}/`;
+      }
+      return `https://${bucket}.s3.amazonaws.com/`;
+    }
+    const bucket = rest.slice(0, slashIndex);
+    const key = rest.slice(slashIndex + 1);
+    // Use path-style for buckets with dots (virtual-hosted fails SSL validation)
+    if (bucket.includes('.')) {
+      return `https://s3.amazonaws.com/${bucket}/${key}`;
+    }
+    return `https://${bucket}.s3.amazonaws.com/${key}`;
+  }
+
+  // GCS: gs://bucket/key or gcs://bucket/key → https://storage.googleapis.com/bucket/key
+  if (url.startsWith('gs://') || url.startsWith('gcs://')) {
+    const prefixLen = url.startsWith('gs://') ? 5 : 6;
+    const rest = url.slice(prefixLen);
+    return `https://storage.googleapis.com/${rest}`;
+  }
+
+  // Azure (az://, azure://, abfs://) - cannot translate without storage account name
+  // Pass through unchanged - will fail with clear error message
+  // Use Python/Rust SDK for Azure virtual refs, or pre-signed URLs
+
+  // Already HTTP(S) or unsupported scheme - pass through
+  return url;
 }
