@@ -5,12 +5,14 @@ use with [zarrita](https://github.com/manzt/zarrita.js).
 
 ## Getting Started
 
-npm install TK
+```bash
+npm install @carbonplan/icechunk-js
+```
 
 ### Basic Usage with zarrita
 
 ```typescript
-import { IcechunkStore } from "icechunk-js";
+import { IcechunkStore } from "@carbonplan/icechunk-js";
 import { open, get } from "zarrita";
 
 // Create a store from a URL
@@ -41,7 +43,7 @@ The main class for zarrita integration. Implements zarrita's `AsyncReadable`
 interface.
 
 ```typescript
-import { IcechunkStore } from "icechunk-js";
+import { IcechunkStore } from "@carbonplan/icechunk-js";
 
 const store = new IcechunkStore("https://example.com/repo", {
   branch: "main", // default; or use tag/snapshot
@@ -56,7 +58,7 @@ const store = new IcechunkStore("https://example.com/repo", {
 For direct access to branches, tags, and checkouts.
 
 ```typescript
-import { Repository, HttpStorage } from "icechunk-js";
+import { Repository, HttpStorage } from "@carbonplan/icechunk-js";
 
 const storage = new HttpStorage("https://example.com/repo");
 
@@ -101,7 +103,7 @@ HTTP/HTTPS storage backend using the Fetch API. Works in Node.js 18+ and
 browsers.
 
 ```typescript
-import { HttpStorage } from "icechunk-js";
+import { HttpStorage } from "@carbonplan/icechunk-js";
 
 const storage = new HttpStorage("https://bucket.s3.amazonaws.com/repo", {
   headers: { Authorization: "Bearer token" },
@@ -115,7 +117,7 @@ const storage = new HttpStorage("https://bucket.s3.amazonaws.com/repo", {
 Implement the `Storage` interface for other backends:
 
 ```typescript
-import type { Storage, ByteRange, RequestOptions } from 'icechunk-js';
+import type { Storage, ByteRange, RequestOptions } from '@carbonplan/icechunk-js';
 
 class MyStorage implements Storage {
   async getObject(path: string, range?: ByteRange, options?: RequestOptions): Promise<Uint8Array> { ... }

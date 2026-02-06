@@ -1,7 +1,19 @@
 {
-  "name": "icechunk-js",
+  "name": "@carbonplan/icechunk-js",
   "version": "0.1.0",
   "description": "Read-only JavaScript/TypeScript reader for Icechunk repositories",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/carbonplan/icechunk.git",
+    "directory": "icechunk-js"
+  },
+  "homepage": "https://github.com/carbonplan/icechunk/tree/main/icechunk-js",
+  "bugs": {
+    "url": "https://github.com/carbonplan/icechunk/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
