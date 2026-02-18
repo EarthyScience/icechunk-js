@@ -1,6 +1,6 @@
 {
   "name": "@carbonplan/icechunk-js",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Read-only JavaScript/TypeScript reader for Icechunk repositories",
   "repository": {
     "type": "git",
