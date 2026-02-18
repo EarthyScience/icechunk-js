@@ -16,22 +16,10 @@ import type { Storage, TransformRequest } from "./storage/storage.js";
 export type AbsolutePath<Rest extends string = string> = `/${Rest}`;
 
 /**
- * zarrita's RangeQuery type for partial reads
- */
-export type RangeQuery =
-  | { offset: number; length: number }
-  | { suffixLength: number };
-
-/**
  * zarrita's AsyncReadable interface
  */
 export interface AsyncReadable<Options = unknown> {
   get(key: AbsolutePath, opts?: Options): Promise<Uint8Array | undefined>;
-  getRange?(
-    key: AbsolutePath,
-    range: RangeQuery,
-    opts?: Options,
-  ): Promise<Uint8Array | undefined>;
 }
 
 /** Options for IcechunkStore */
@@ -196,30 +184,6 @@ export class IcechunkStore implements AsyncReadable {
     }
   }
 
-  /**
-   * Get partial data for a zarr key (optional optimization).
-   *
-   * @param key - Absolute path
-   * @param range - Byte range to fetch
-   * @param opts - Optional request options (supports AbortSignal for cancellation)
-   * @returns Data bytes or undefined if not found
-   */
-  async getRange(
-    key: AbsolutePath,
-    range: RangeQuery,
-    opts?: { signal?: AbortSignal },
-  ): Promise<Uint8Array | undefined> {
-    if (opts?.signal?.aborted) return undefined;
-
-    const data = await this.get(key, opts);
-    if (!data) return undefined;
-
-    if ("suffixLength" in range) {
-      return data.slice(-range.suffixLength);
-    }
-
-    return data.slice(range.offset, range.offset + range.length);
-  }
 }
 
 /** Parsed zarr key */

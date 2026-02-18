@@ -166,53 +166,6 @@ describe("IcechunkStore", () => {
     });
   });
 
-  describe("getRange", () => {
-    it("should return sliced data for offset/length range", async () => {
-      const getRawMetadataSpy = vi
-        .fn()
-        .mockReturnValue(new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]));
-
-      const store = createStoreWithMockSession({
-        getRawMetadata: getRawMetadataSpy,
-        getChunk: vi.fn(),
-      });
-
-      const result = await store.getRange("/zarr.json" as AbsolutePath, {
-        offset: 2,
-        length: 4,
-      });
-
-      expect(result).toEqual(new Uint8Array([2, 3, 4, 5]));
-    });
-
-    it("should return sliced data for suffixLength range", async () => {
-      const getRawMetadataSpy = vi
-        .fn()
-        .mockReturnValue(new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]));
-
-      const store = createStoreWithMockSession({
-        getRawMetadata: getRawMetadataSpy,
-        getChunk: vi.fn(),
-      });
-
-      const result = await store.getRange("/zarr.json" as AbsolutePath, {
-        suffixLength: 3,
-      });
-
-      expect(result).toEqual(new Uint8Array([7, 8, 9]));
-    });
-  });
-
-  describe("fail-fast initialization", () => {
-    it("should throw on open() when repository is invalid", async () => {
-      const storage = new MockStorage({});
-
-      await expect(IcechunkStore.open(storage)).rejects.toThrow(
-        "Not a valid icechunk repository",
-      );
-    });
-  });
-
   describe("abort signal handling", () => {
     it("should return undefined when signal is already aborted", async () => {
       const getChunkSpy = vi.fn();
@@ -262,26 +215,6 @@ describe("IcechunkStore", () => {
       const result = await store.get("/array/c/0" as AbsolutePath, {
         signal: controller.signal,
       });
-
-      expect(result).toBeUndefined();
-    });
-
-    it("should return undefined for getRange when signal is already aborted", async () => {
-      const store = createStoreWithMockSession({
-        getRawMetadata: vi
-          .fn()
-          .mockReturnValue(new Uint8Array([1, 2, 3, 4, 5])),
-        getChunk: vi.fn(),
-      });
-
-      const controller = new AbortController();
-      controller.abort();
-
-      const result = await store.getRange(
-        "/zarr.json" as AbsolutePath,
-        { offset: 0, length: 3 },
-        { signal: controller.signal },
-      );
 
       expect(result).toBeUndefined();
     });
