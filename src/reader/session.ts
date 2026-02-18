@@ -2,9 +2,9 @@
  * ReadSession - Read-only session for accessing icechunk data.
  */
 
-import type { Storage, ByteRange, RequestOptions } from '../storage/storage.js';
-import { AbortError } from '../storage/storage.js';
-import { decompress } from 'fzstd';
+import type { Storage, ByteRange, RequestOptions } from "../storage/storage.js";
+import { AbortError } from "../storage/storage.js";
+import { decompress } from "fzstd";
 import {
   parseHeader,
   validateFileType,
@@ -12,13 +12,13 @@ import {
   FileType,
   CompressionAlgorithm,
   SpecVersion,
-} from '../format/header.js';
+} from "../format/header.js";
 import {
   getSnapshotPath,
   getManifestPath,
   getChunkPath,
-} from '../format/constants.js';
-import { encodeObjectId12 } from '../format/object-id.js';
+} from "../format/constants.js";
+import { encodeObjectId12 } from "../format/object-id.js";
 import {
   parseSnapshot,
   parseManifest,
@@ -29,7 +29,7 @@ import {
   type NodeSnapshot,
   type ChunkPayload,
   type ObjectId12,
-} from '../format/flatbuffers/index.js';
+} from "../format/flatbuffers/index.js";
 
 /**
  * ReadSession provides read access to a specific snapshot.
@@ -45,7 +45,11 @@ export class ReadSession {
   private specVersion: SpecVersion;
   private manifestCache: Map<string, Manifest> = new Map();
 
-  private constructor(storage: Storage, snapshot: Snapshot, specVersion: SpecVersion) {
+  private constructor(
+    storage: Storage,
+    snapshot: Snapshot,
+    specVersion: SpecVersion,
+  ) {
     this.storage = storage;
     this.snapshot = snapshot;
     this.specVersion = specVersion;
@@ -59,8 +63,16 @@ export class ReadSession {
    * @param options - Optional request options (signal for cancellation)
    * @returns ReadSession instance
    */
-  static async open(storage: Storage, snapshotId: Uint8Array, options?: RequestOptions): Promise<ReadSession> {
-    const { snapshot, specVersion } = await ReadSession.loadSnapshot(storage, snapshotId, options);
+  static async open(
+    storage: Storage,
+    snapshotId: Uint8Array,
+    options?: RequestOptions,
+  ): Promise<ReadSession> {
+    const { snapshot, specVersion } = await ReadSession.loadSnapshot(
+      storage,
+      snapshotId,
+      options,
+    );
     return new ReadSession(storage, snapshot, specVersion);
   }
 
@@ -68,7 +80,7 @@ export class ReadSession {
   private static async loadSnapshot(
     storage: Storage,
     snapshotId: Uint8Array,
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<{ snapshot: Snapshot; specVersion: SpecVersion }> {
     const path = getSnapshotPath(encodeObjectId12(snapshotId));
     const data = await storage.getObject(path, undefined, options);
@@ -91,7 +103,10 @@ export class ReadSession {
   }
 
   /** Load and parse a manifest from storage */
-  private async loadManifest(manifestId: ObjectId12, options?: RequestOptions): Promise<Manifest> {
+  private async loadManifest(
+    manifestId: ObjectId12,
+    options?: RequestOptions,
+  ): Promise<Manifest> {
     const idStr = encodeObjectId12(manifestId);
 
     // Check cache first
@@ -158,7 +173,7 @@ export class ReadSession {
    */
   getNode(path: string): NodeSnapshot | null {
     // Normalize path
-    const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+    const normalizedPath = path.startsWith("/") ? path : `/${path}`;
 
     // Binary search since nodes are sorted by path
     return this.binarySearchNode(normalizedPath);
@@ -180,14 +195,14 @@ export class ReadSession {
    * @returns Array of child nodes
    */
   listChildren(parentPath: string): NodeSnapshot[] {
-    const normalizedParent = parentPath === '/' ? '' : parentPath;
-    const prefix = normalizedParent + '/';
+    const normalizedParent = parentPath === "/" ? "" : parentPath;
+    const prefix = normalizedParent + "/";
 
     return this.snapshot.nodes.filter((node) => {
       if (!node.path.startsWith(prefix)) return false;
       // Check it's a direct child (no more slashes after prefix)
       const rest = node.path.slice(prefix.length);
-      return !rest.includes('/');
+      return !rest.includes("/");
     });
   }
 
@@ -225,12 +240,16 @@ export class ReadSession {
    * @param options - Optional request options (signal for cancellation)
    * @returns Chunk data bytes or null if not found
    */
-  async getChunk(path: string, coords: number[], options?: RequestOptions): Promise<Uint8Array | null> {
+  async getChunk(
+    path: string,
+    coords: number[],
+    options?: RequestOptions,
+  ): Promise<Uint8Array | null> {
     // Early abort check
     if (options?.signal?.aborted) return null;
 
     const node = this.getNode(path);
-    if (!node || node.nodeData.type !== 'array') {
+    if (!node || node.nodeData.type !== "array") {
       return null;
     }
 
@@ -267,7 +286,7 @@ export class ReadSession {
   /** Check if coordinates fall within extent ranges */
   private coordsInExtents(
     coords: number[],
-    extents: Array<{ from: number; to: number }>
+    extents: Array<{ from: number; to: number }>,
   ): boolean {
     if (coords.length !== extents.length) return false;
 
@@ -282,12 +301,15 @@ export class ReadSession {
   }
 
   /** Fetch chunk data based on payload type */
-  private async fetchChunkPayload(payload: ChunkPayload, options?: RequestOptions): Promise<Uint8Array> {
+  private async fetchChunkPayload(
+    payload: ChunkPayload,
+    options?: RequestOptions,
+  ): Promise<Uint8Array> {
     switch (payload.type) {
-      case 'inline':
+      case "inline":
         return payload.data;
 
-      case 'native': {
+      case "native": {
         const path = getChunkPath(encodeObjectId12(payload.chunkId));
         const range: ByteRange = {
           start: payload.offset,
@@ -296,7 +318,7 @@ export class ReadSession {
         return this.storage.getObject(path, range, options);
       }
 
-      case 'virtual': {
+      case "virtual": {
         // Virtual chunks reference external URLs
         // Translate cloud storage URLs to HTTPS endpoints
         let httpUrl = translateToHttpUrl(payload.location);
@@ -309,7 +331,9 @@ export class ReadSession {
 
         // If transformRequest provided, let it override URL and add options
         if (options?.transformRequest) {
-          const result = await options.transformRequest(httpUrl, { method: 'GET' });
+          const result = await options.transformRequest(httpUrl, {
+            method: "GET",
+          });
           httpUrl = result.url;
           if (result.headers) {
             fetchInit.headers = { ...fetchInit.headers, ...result.headers };
@@ -327,7 +351,7 @@ export class ReadSession {
           response = await fetch(httpUrl, fetchInit);
         } catch (error) {
           // Translate abort errors to our class (handles DOMException and other implementations)
-          if (error instanceof Error && error.name === 'AbortError') {
+          if (error instanceof Error && error.name === "AbortError") {
             throw new AbortError();
           }
           throw error;
@@ -335,7 +359,7 @@ export class ReadSession {
 
         if (!response.ok && response.status !== 206) {
           throw new Error(
-            `Failed to fetch virtual chunk from ${httpUrl}: ${response.status} ${response.statusText}`
+            `Failed to fetch virtual chunk from ${httpUrl}: ${response.status} ${response.statusText}`,
           );
         }
 
@@ -410,13 +434,13 @@ function compareUtf8Bytes(a: string, b: string): number {
 function translateToHttpUrl(url: string): string {
   // S3: s3://bucket/key → https://bucket.s3.amazonaws.com/key
   // For buckets with dots, use path-style: https://s3.amazonaws.com/bucket/key
-  if (url.startsWith('s3://')) {
+  if (url.startsWith("s3://")) {
     const rest = url.slice(5); // Remove 's3://'
-    const slashIndex = rest.indexOf('/');
+    const slashIndex = rest.indexOf("/");
     if (slashIndex === -1) {
       // Just bucket, no key
       const bucket = rest;
-      if (bucket.includes('.')) {
+      if (bucket.includes(".")) {
         return `https://s3.amazonaws.com/${bucket}/`;
       }
       return `https://${bucket}.s3.amazonaws.com/`;
@@ -424,15 +448,15 @@ function translateToHttpUrl(url: string): string {
     const bucket = rest.slice(0, slashIndex);
     const key = rest.slice(slashIndex + 1);
     // Use path-style for buckets with dots (virtual-hosted fails SSL validation)
-    if (bucket.includes('.')) {
+    if (bucket.includes(".")) {
       return `https://s3.amazonaws.com/${bucket}/${key}`;
     }
     return `https://${bucket}.s3.amazonaws.com/${key}`;
   }
 
   // GCS: gs://bucket/key or gcs://bucket/key → https://storage.googleapis.com/bucket/key
-  if (url.startsWith('gs://') || url.startsWith('gcs://')) {
-    const prefixLen = url.startsWith('gs://') ? 5 : 6;
+  if (url.startsWith("gs://") || url.startsWith("gcs://")) {
+    const prefixLen = url.startsWith("gs://") ? 5 : 6;
     const rest = url.slice(prefixLen);
     return `https://storage.googleapis.com/${rest}`;
   }

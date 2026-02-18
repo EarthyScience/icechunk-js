@@ -5,20 +5,20 @@
 /** Storage path constants */
 export const PATHS = {
   /** Refs directory */
-  REFS: 'refs',
+  REFS: "refs",
 
   /** Snapshots directory */
-  SNAPSHOTS: 'snapshots',
+  SNAPSHOTS: "snapshots",
 
   /** Manifests directory */
-  MANIFESTS: 'manifests',
+  MANIFESTS: "manifests",
 
   /** Chunks directory */
-  CHUNKS: 'chunks',
+  CHUNKS: "chunks",
 } as const;
 
 /** Repository info file path (v2 format) */
-export const REPO_INFO_PATH = 'repo';
+export const REPO_INFO_PATH = "repo";
 
 /**
  * Get the storage path prefix for a branch ref directory.
@@ -55,7 +55,7 @@ export function getTagRefDirPath(name: string): string {
  * for optimistic concurrency control. When listing is not supported,
  * this legacy filename is used as the fallback.
  */
-export const REF_FILE_NAME = 'ref.json';
+export const REF_FILE_NAME = "ref.json";
 
 /**
  * Get the storage path for a branch ref file (legacy format).

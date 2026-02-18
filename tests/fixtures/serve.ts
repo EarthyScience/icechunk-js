@@ -11,23 +11,26 @@
  *   npx tsx tests/fixtures/serve.ts [port] [fixtures_dir]
  */
 
-import { createServer, IncomingMessage, ServerResponse } from 'node:http';
-import { readFile, stat } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { createServer, IncomingMessage, ServerResponse } from "node:http";
+import { readFile, stat } from "node:fs/promises";
+import { join, resolve } from "node:path";
 
-const PORT = parseInt(process.argv[2] || '8765', 10);
-const FIXTURES_DIR = resolve(process.argv[3] || 'tests/fixtures');
+const PORT = parseInt(process.argv[2] || "8765", 10);
+const FIXTURES_DIR = resolve(process.argv[3] || "tests/fixtures");
 
 function setCorsHeaders(res: ServerResponse): void {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Range');
-  res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Accept-Ranges');
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Range");
+  res.setHeader(
+    "Access-Control-Expose-Headers",
+    "Content-Range, Content-Length, Accept-Ranges",
+  );
 }
 
 function parseRangeHeader(
   rangeHeader: string,
-  fileSize: number
+  fileSize: number,
 ): { start: number; end: number } | null {
   const match = rangeHeader.match(/bytes=(\d+)-(\d*)/);
   if (!match) return null;
@@ -44,25 +47,28 @@ function parseRangeHeader(
   return { start, end: clampedEnd };
 }
 
-async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+async function handleRequest(
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
   // Parse URL and strip leading slash to prevent path traversal
-  const url = new URL(req.url || '/', `http://localhost:${PORT}`);
-  const relativePath = decodeURIComponent(url.pathname).replace(/^\/+/, '');
+  const url = new URL(req.url || "/", `http://localhost:${PORT}`);
+  const relativePath = decodeURIComponent(url.pathname).replace(/^\/+/, "");
 
   // Set CORS headers on all responses
   setCorsHeaders(res);
 
   // Health check endpoint for readiness detection
-  if (relativePath === '_health') {
-    res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('ok');
+  if (relativePath === "_health") {
+    res.writeHead(200, { "Content-Type": "text/plain" });
+    res.end("ok");
     return;
   }
 
   const filePath = join(FIXTURES_DIR, relativePath);
 
   // Handle OPTIONS preflight
-  if (req.method === 'OPTIONS') {
+  if (req.method === "OPTIONS") {
     res.writeHead(204);
     res.end();
     return;
@@ -74,19 +80,19 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     if (stats.isDirectory()) {
       // Return 404 for directories (not supported)
       res.writeHead(404);
-      res.end('Not Found');
+      res.end("Not Found");
       return;
     }
 
     const fileSize = stats.size;
 
     // Always indicate Range support
-    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader("Accept-Ranges", "bytes");
 
     // Handle HEAD request
-    if (req.method === 'HEAD') {
-      res.setHeader('Content-Length', fileSize);
-      res.setHeader('Content-Type', 'application/octet-stream');
+    if (req.method === "HEAD") {
+      res.setHeader("Content-Length", fileSize);
+      res.setHeader("Content-Type", "application/octet-stream");
       res.writeHead(200);
       res.end();
       return;
@@ -99,9 +105,9 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
 
       if (!range) {
         // Invalid range - return 416 Range Not Satisfiable
-        res.setHeader('Content-Range', `bytes */${fileSize}`);
+        res.setHeader("Content-Range", `bytes */${fileSize}`);
         res.writeHead(416);
-        res.end('Range Not Satisfiable');
+        res.end("Range Not Satisfiable");
         return;
       }
 
@@ -112,9 +118,9 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       const content = await readFile(filePath);
       const slice = content.slice(start, end + 1);
 
-      res.setHeader('Content-Type', 'application/octet-stream');
-      res.setHeader('Content-Length', contentLength);
-      res.setHeader('Content-Range', `bytes ${start}-${end}/${fileSize}`);
+      res.setHeader("Content-Type", "application/octet-stream");
+      res.setHeader("Content-Length", contentLength);
+      res.setHeader("Content-Range", `bytes ${start}-${end}/${fileSize}`);
       res.writeHead(206); // Partial Content
       res.end(slice);
       return;
@@ -122,29 +128,29 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
 
     // Full file read
     const content = await readFile(filePath);
-    res.setHeader('Content-Type', 'application/octet-stream');
-    res.setHeader('Content-Length', content.length);
+    res.setHeader("Content-Type", "application/octet-stream");
+    res.setHeader("Content-Length", content.length);
     res.writeHead(200);
     res.end(content);
   } catch (err: unknown) {
     const error = err as NodeJS.ErrnoException;
-    if (error.code === 'ENOENT') {
+    if (error.code === "ENOENT") {
       res.writeHead(404);
-      res.end('Not Found');
+      res.end("Not Found");
     } else {
-      console.error('Server error:', error);
+      console.error("Server error:", error);
       res.writeHead(500);
-      res.end('Internal Server Error');
+      res.end("Internal Server Error");
     }
   }
 }
 
 const server = createServer((req, res) => {
   handleRequest(req, res).catch((err) => {
-    console.error('Unhandled error:', err);
+    console.error("Unhandled error:", err);
     if (!res.headersSent) {
       res.writeHead(500);
-      res.end('Internal Server Error');
+      res.end("Internal Server Error");
     }
   });
 });

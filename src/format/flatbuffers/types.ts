@@ -20,7 +20,9 @@ export type ObjectId8 = Uint8Array; // Always 8 bytes
  */
 export function asObjectId12(bytes: Uint8Array): ObjectId12 {
   if (bytes.length !== 12) {
-    throw new Error(`Invalid ObjectId12: expected 12 bytes, got ${bytes.length}`);
+    throw new Error(
+      `Invalid ObjectId12: expected 12 bytes, got ${bytes.length}`,
+    );
   }
   return bytes as ObjectId12;
 }
@@ -137,12 +139,12 @@ export interface DimensionShape {
 
 /** Group node data (empty - just a marker) */
 export interface GroupNodeData {
-  type: 'group';
+  type: "group";
 }
 
 /** Array node data */
 export interface ArrayNodeData {
-  type: 'array';
+  type: "array";
 
   /** Shape per dimension */
   shape: DimensionShape[];
@@ -202,13 +204,13 @@ export interface Snapshot {
 
 /** Inline chunk - data embedded in manifest */
 export interface InlineChunkPayload {
-  type: 'inline';
+  type: "inline";
   data: Uint8Array;
 }
 
 /** Native chunk - stored in repository's chunk storage */
 export interface NativeChunkPayload {
-  type: 'native';
+  type: "native";
   chunkId: ObjectId12;
   offset: number;
   length: number;
@@ -216,7 +218,7 @@ export interface NativeChunkPayload {
 
 /** Virtual chunk - stored externally */
 export interface VirtualChunkPayload {
-  type: 'virtual';
+  type: "virtual";
   location: string;
   offset: number;
   length: number;
@@ -225,4 +227,7 @@ export interface VirtualChunkPayload {
 }
 
 /** Union of all chunk payload types */
-export type ChunkPayload = InlineChunkPayload | NativeChunkPayload | VirtualChunkPayload;
+export type ChunkPayload =
+  | InlineChunkPayload
+  | NativeChunkPayload
+  | VirtualChunkPayload;

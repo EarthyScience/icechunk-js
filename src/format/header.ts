@@ -14,9 +14,18 @@ export const HEADER_SIZE = 39;
 
 /** Magic bytes for icechunk format: "ICE🧊CHUNK" */
 export const MAGIC_BYTES = new Uint8Array([
-  0x49, 0x43, 0x45, // ICE
-  0xf0, 0x9f, 0xa7, 0x8a, // 🧊 (U+1F9CA in UTF-8)
-  0x43, 0x48, 0x55, 0x4e, 0x4b, // CHUNK
+  0x49,
+  0x43,
+  0x45, // ICE
+  0xf0,
+  0x9f,
+  0xa7,
+  0x8a, // 🧊 (U+1F9CA in UTF-8)
+  0x43,
+  0x48,
+  0x55,
+  0x4e,
+  0x4b, // CHUNK
 ]);
 
 /** Spec version enum */
@@ -60,7 +69,7 @@ export interface IcechunkHeader {
 export class HeaderParseError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = 'HeaderParseError';
+    this.name = "HeaderParseError";
   }
 }
 
@@ -74,14 +83,14 @@ export class HeaderParseError extends Error {
 export function parseHeader(data: Uint8Array): IcechunkHeader {
   if (data.length < HEADER_SIZE) {
     throw new HeaderParseError(
-      `Buffer too small: expected at least ${HEADER_SIZE} bytes, got ${data.length}`
+      `Buffer too small: expected at least ${HEADER_SIZE} bytes, got ${data.length}`,
     );
   }
 
   // Check magic bytes
   const magic = data.slice(0, 12);
   if (!compareMagic(magic, MAGIC_BYTES)) {
-    throw new HeaderParseError('Invalid magic bytes: not an icechunk file');
+    throw new HeaderParseError("Invalid magic bytes: not an icechunk file");
   }
 
   // Parse implementation name (bytes 12-35)
@@ -92,7 +101,10 @@ export function parseHeader(data: Uint8Array): IcechunkHeader {
 
   // Parse spec version (byte 36)
   const specVersionByte = data[36];
-  if (specVersionByte !== SpecVersion.V1_0 && specVersionByte !== SpecVersion.V2_0) {
+  if (
+    specVersionByte !== SpecVersion.V1_0 &&
+    specVersionByte !== SpecVersion.V2_0
+  ) {
     throw new HeaderParseError(`Invalid spec version: ${specVersionByte}`);
   }
   const specVersion = specVersionByte as SpecVersion;
@@ -106,8 +118,13 @@ export function parseHeader(data: Uint8Array): IcechunkHeader {
 
   // Parse compression (byte 38)
   const compressionByte = data[38];
-  if (compressionByte !== CompressionAlgorithm.None && compressionByte !== CompressionAlgorithm.Zstd) {
-    throw new HeaderParseError(`Invalid compression algorithm: ${compressionByte}`);
+  if (
+    compressionByte !== CompressionAlgorithm.None &&
+    compressionByte !== CompressionAlgorithm.Zstd
+  ) {
+    throw new HeaderParseError(
+      `Invalid compression algorithm: ${compressionByte}`,
+    );
   }
   const compression = compressionByte as CompressionAlgorithm;
 
@@ -128,13 +145,13 @@ export function parseHeader(data: Uint8Array): IcechunkHeader {
  */
 export function validateFileType(
   header: IcechunkHeader,
-  expectedType: FileType
+  expectedType: FileType,
 ): void {
   if (header.fileType !== expectedType) {
     const expected = FileType[expectedType];
     const actual = FileType[header.fileType];
     throw new HeaderParseError(
-      `Invalid file type: expected ${expected}, got ${actual}`
+      `Invalid file type: expected ${expected}, got ${actual}`,
     );
   }
 }

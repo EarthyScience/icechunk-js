@@ -1,6 +1,6 @@
-import { spawn, type ChildProcess } from 'node:child_process';
-import { resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { spawn, type ChildProcess } from "node:child_process";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -27,10 +27,14 @@ async function waitForServer(): Promise<void> {
     } catch {
       // Server not ready yet, continue polling
     }
-    await new Promise((resolve) => setTimeout(resolve, HEALTH_CHECK_INTERVAL_MS));
+    await new Promise((resolve) =>
+      setTimeout(resolve, HEALTH_CHECK_INTERVAL_MS),
+    );
   }
 
-  throw new Error(`Fixture server failed to start within ${STARTUP_TIMEOUT_MS}ms`);
+  throw new Error(
+    `Fixture server failed to start within ${STARTUP_TIMEOUT_MS}ms`,
+  );
 }
 
 /**
@@ -38,28 +42,28 @@ async function waitForServer(): Promise<void> {
  */
 export default async function setup(): Promise<() => Promise<void>> {
   // Start fixture server - serve from Python test data directory
-  const serverPath = resolve(__dirname, 'fixtures/serve.ts');
+  const serverPath = resolve(__dirname, "fixtures/serve.ts");
   // Use the test data from the Python package (checked into git for backwards compatibility)
-  const fixturesDir = resolve(__dirname, '../../icechunk-python/tests/data');
+  const fixturesDir = resolve(__dirname, "../../icechunk-python/tests/data");
 
   fixtureServer = spawn(
-    'npx',
-    ['tsx', serverPath, String(FIXTURE_SERVER_PORT), fixturesDir],
+    "npx",
+    ["tsx", serverPath, String(FIXTURE_SERVER_PORT), fixturesDir],
     {
-      stdio: 'pipe',
+      stdio: "pipe",
       detached: false,
-      cwd: resolve(__dirname, '..'),
-    }
+      cwd: resolve(__dirname, ".."),
+    },
   );
 
   // Log stderr for debugging (but don't use it for readiness)
-  fixtureServer.stderr?.on('data', (data: Buffer) => {
-    console.error('Fixture server stderr:', data.toString());
+  fixtureServer.stderr?.on("data", (data: Buffer) => {
+    console.error("Fixture server stderr:", data.toString());
   });
 
   // Handle early exit
   let earlyExit = false;
-  fixtureServer.on('exit', (code) => {
+  fixtureServer.on("exit", (code) => {
     if (code !== 0 && code !== null) {
       earlyExit = true;
     }
@@ -70,14 +74,14 @@ export default async function setup(): Promise<() => Promise<void>> {
     await waitForServer();
   } catch (error) {
     if (earlyExit) {
-      throw new Error('Fixture server exited before becoming ready');
+      throw new Error("Fixture server exited before becoming ready");
     }
     throw error;
   }
 
   return async () => {
     if (fixtureServer) {
-      fixtureServer.kill('SIGTERM');
+      fixtureServer.kill("SIGTERM");
       fixtureServer = null;
     }
   };

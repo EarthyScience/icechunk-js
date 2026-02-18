@@ -4,7 +4,7 @@
  * Field indices based on snapshot.fbs schema order.
  */
 
-import { parseRootTable, TableReader } from './reader.js';
+import { parseRootTable, TableReader } from "./reader.js";
 import {
   asObjectId12,
   asObjectId8,
@@ -17,7 +17,7 @@ import {
   type DimensionShape,
   type ChunkIndexRange,
   type MetadataItem,
-} from './types.js';
+} from "./types.js";
 
 // Snapshot field indices (from schema order)
 const SNAPSHOT_ID = 0;
@@ -63,11 +63,14 @@ export function parseSnapshot(data: Uint8Array): Snapshot {
 
   // Parse ID (required)
   const idBytes = root.readInlineStruct(SNAPSHOT_ID, OBJECT_ID_12_SIZE);
-  if (!idBytes) throw new Error('Snapshot missing required id field');
+  if (!idBytes) throw new Error("Snapshot missing required id field");
   const id = asObjectId12(idBytes);
 
   // Parse parent ID (optional)
-  const parentIdBytes = root.readInlineStruct(SNAPSHOT_PARENT_ID, OBJECT_ID_12_SIZE);
+  const parentIdBytes = root.readInlineStruct(
+    SNAPSHOT_PARENT_ID,
+    OBJECT_ID_12_SIZE,
+  );
   const parentId = parentIdBytes ? asObjectId12(parentIdBytes) : null;
 
   // Parse nodes
@@ -84,7 +87,7 @@ export function parseSnapshot(data: Uint8Array): Snapshot {
   const flushedAt = root.readUint64(SNAPSHOT_FLUSHED_AT, 0n);
 
   // Parse message (required)
-  const message = root.readString(SNAPSHOT_MESSAGE) ?? '';
+  const message = root.readString(SNAPSHOT_MESSAGE) ?? "";
 
   // Parse metadata
   const metadataLength = root.getVectorLength(SNAPSHOT_METADATA);
@@ -104,7 +107,11 @@ export function parseSnapshot(data: Uint8Array): Snapshot {
   const manifestFilesLength = root.getVectorLength(SNAPSHOT_MANIFEST_FILES);
   const manifestFiles: ManifestFileInfo[] = [];
   for (let i = 0; i < manifestFilesLength; i++) {
-    const structBytes = root.readVectorStruct(SNAPSHOT_MANIFEST_FILES, i, MANIFEST_FILE_INFO_SIZE);
+    const structBytes = root.readVectorStruct(
+      SNAPSHOT_MANIFEST_FILES,
+      i,
+      MANIFEST_FILE_INFO_SIZE,
+    );
     if (structBytes) {
       manifestFiles.push(parseManifestFileInfo(structBytes));
     }
@@ -124,11 +131,11 @@ export function parseSnapshot(data: Uint8Array): Snapshot {
 function parseNodeSnapshot(table: TableReader): NodeSnapshot {
   // Parse ID (required)
   const idBytes = table.readInlineStruct(NODE_ID, OBJECT_ID_8_SIZE);
-  if (!idBytes) throw new Error('NodeSnapshot missing required id field');
+  if (!idBytes) throw new Error("NodeSnapshot missing required id field");
   const id = asObjectId8(idBytes);
 
   // Parse path (required)
-  const path = table.readString(NODE_PATH) ?? '';
+  const path = table.readString(NODE_PATH) ?? "";
 
   // Parse user_data (required)
   const userData = table.readByteVector(NODE_USER_DATA) ?? new Uint8Array(0);
@@ -145,7 +152,7 @@ function parseNodeData(parentTable: TableReader, unionType: number): NodeData {
   // Union type 0 = NONE, 1 = Array, 2 = Group
   if (unionType === 2) {
     // Group
-    return { type: 'group' };
+    return { type: "group" };
   }
 
   if (unionType === 1) {
@@ -153,13 +160,13 @@ function parseNodeData(parentTable: TableReader, unionType: number): NodeData {
     // Union value is at field index NODE_DATA + 1
     const arrayTable = parentTable.getNestedTable(NODE_DATA + 1);
     if (!arrayTable) {
-      throw new Error('ArrayNodeData union type but no table');
+      throw new Error("ArrayNodeData union type but no table");
     }
     return parseArrayNodeData(arrayTable);
   }
 
   // Default to group if unknown
-  return { type: 'group' };
+  return { type: "group" };
 }
 
 function parseArrayNodeData(table: TableReader): ArrayNodeData {
@@ -167,7 +174,11 @@ function parseArrayNodeData(table: TableReader): ArrayNodeData {
   const shapeLength = table.getVectorLength(ARRAY_SHAPE);
   const shape: DimensionShape[] = [];
   for (let i = 0; i < shapeLength; i++) {
-    const structBytes = table.readVectorStruct(ARRAY_SHAPE, i, DIMENSION_SHAPE_SIZE);
+    const structBytes = table.readVectorStruct(
+      ARRAY_SHAPE,
+      i,
+      DIMENSION_SHAPE_SIZE,
+    );
     if (structBytes) {
       shape.push(parseDimensionShape(structBytes));
     }
@@ -196,7 +207,7 @@ function parseArrayNodeData(table: TableReader): ArrayNodeData {
   }
 
   return {
-    type: 'array',
+    type: "array",
     shape,
     dimensionNames,
     manifests,
@@ -205,15 +216,22 @@ function parseArrayNodeData(table: TableReader): ArrayNodeData {
 
 function parseManifestRef(table: TableReader): ManifestRef {
   // Object ID (inline struct)
-  const objectIdBytes = table.readInlineStruct(MANIFEST_REF_OBJECT_ID, OBJECT_ID_12_SIZE);
-  if (!objectIdBytes) throw new Error('ManifestRef missing object_id');
+  const objectIdBytes = table.readInlineStruct(
+    MANIFEST_REF_OBJECT_ID,
+    OBJECT_ID_12_SIZE,
+  );
+  if (!objectIdBytes) throw new Error("ManifestRef missing object_id");
   const objectId = asObjectId12(objectIdBytes);
 
   // Extents (vector of ChunkIndexRange structs)
   const extentsLength = table.getVectorLength(MANIFEST_REF_EXTENTS);
   const extents: ChunkIndexRange[] = [];
   for (let i = 0; i < extentsLength; i++) {
-    const structBytes = table.readVectorStruct(MANIFEST_REF_EXTENTS, i, CHUNK_INDEX_RANGE_SIZE);
+    const structBytes = table.readVectorStruct(
+      MANIFEST_REF_EXTENTS,
+      i,
+      CHUNK_INDEX_RANGE_SIZE,
+    );
     if (structBytes) {
       extents.push(parseChunkIndexRange(structBytes));
     }

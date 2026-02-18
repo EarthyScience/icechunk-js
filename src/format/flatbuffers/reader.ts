@@ -16,7 +16,11 @@ export class FlatBufferReader {
   constructor(buffer: ArrayBuffer | Uint8Array) {
     if (buffer instanceof Uint8Array) {
       this.bytes = buffer;
-      this.view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+      this.view = new DataView(
+        buffer.buffer,
+        buffer.byteOffset,
+        buffer.byteLength,
+      );
     } else {
       this.bytes = new Uint8Array(buffer);
       this.view = new DataView(buffer);
@@ -74,11 +78,15 @@ export class FlatBufferReader {
   }
 
   /** Get vector element position */
-  getVectorElementPos(offsetPos: number, index: number, elementSize: number): number {
+  getVectorElementPos(
+    offsetPos: number,
+    index: number,
+    elementSize: number,
+  ): number {
     const vectorOffset = this.readUint32(offsetPos);
     const vectorPos = offsetPos + vectorOffset;
     // Skip length (4 bytes) then index into elements
-    return vectorPos + 4 + (index * elementSize);
+    return vectorPos + 4 + index * elementSize;
   }
 
   /** Read a byte vector at the given offset position */
@@ -240,7 +248,11 @@ export class TableReader {
   }
 
   /** Read a struct from a vector (inline structs) */
-  readVectorStruct(fieldIndex: number, index: number, structSize: number): Uint8Array | null {
+  readVectorStruct(
+    fieldIndex: number,
+    index: number,
+    structSize: number,
+  ): Uint8Array | null {
     const pos = this.getFieldPos(fieldIndex);
     if (pos === null) return null;
 

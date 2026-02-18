@@ -5,10 +5,10 @@
  * zarrita for array operations on icechunk repositories.
  */
 
-import { Repository } from './reader/repository.js';
-import { ReadSession } from './reader/session.js';
-import { HttpStorage } from './storage/http-storage.js';
-import type { Storage, TransformRequest } from './storage/storage.js';
+import { Repository } from "./reader/repository.js";
+import { ReadSession } from "./reader/session.js";
+import { HttpStorage } from "./storage/http-storage.js";
+import type { Storage, TransformRequest } from "./storage/storage.js";
 
 /**
  * zarrita's AbsolutePath type - paths must start with "/"
@@ -30,7 +30,7 @@ export interface AsyncReadable<Options = unknown> {
   getRange?(
     key: AbsolutePath,
     range: RangeQuery,
-    opts?: Options
+    opts?: Options,
   ): Promise<Uint8Array | undefined>;
 }
 
@@ -49,7 +49,7 @@ export interface IcechunkStoreOptions {
   signal?: AbortSignal;
 
   /** Format version hint to skip auto-detection. 'v1' skips /repo request. */
-  formatVersion?: 'v1' | 'v2';
+  formatVersion?: "v1" | "v2";
 
   /**
    * Callback to transform virtual chunk URLs before fetching.
@@ -82,10 +82,13 @@ export class IcechunkStore implements AsyncReadable {
   private session: ReadSession;
   private transformRequest?: TransformRequest;
 
-  private constructor(session: ReadSession, transformRequest?: TransformRequest) {
+  private constructor(
+    session: ReadSession,
+    transformRequest?: TransformRequest,
+  ) {
     if (!(session instanceof ReadSession)) {
       throw new Error(
-        'IcechunkStore constructor is private. Use IcechunkStore.open() instead.'
+        "IcechunkStore constructor is private. Use IcechunkStore.open() instead.",
       );
     }
     this.session = session;
@@ -98,7 +101,10 @@ export class IcechunkStore implements AsyncReadable {
    * @param url - URL to the icechunk repository
    * @param options - Store options (branch, tag, or snapshot to checkout)
    */
-  static async open(url: string, options?: IcechunkStoreOptions): Promise<IcechunkStore>;
+  static async open(
+    url: string,
+    options?: IcechunkStoreOptions,
+  ): Promise<IcechunkStore>;
 
   /**
    * Open an IcechunkStore from an existing ReadSession.
@@ -106,7 +112,10 @@ export class IcechunkStore implements AsyncReadable {
    * @param session - Existing ReadSession
    * @param options - Store options (only transformRequest is used)
    */
-  static async open(session: ReadSession, options?: Pick<IcechunkStoreOptions, 'transformRequest'>): Promise<IcechunkStore>;
+  static async open(
+    session: ReadSession,
+    options?: Pick<IcechunkStoreOptions, "transformRequest">,
+  ): Promise<IcechunkStore>;
 
   /**
    * Open an IcechunkStore from a custom Storage backend.
@@ -114,19 +123,27 @@ export class IcechunkStore implements AsyncReadable {
    * @param storage - Custom Storage implementation
    * @param options - Store options (branch, tag, or snapshot to checkout)
    */
-  static async open(storage: Storage, options?: IcechunkStoreOptions): Promise<IcechunkStore>;
+  static async open(
+    storage: Storage,
+    options?: IcechunkStoreOptions,
+  ): Promise<IcechunkStore>;
 
   static async open(
     arg: string | ReadSession | Storage,
-    options: IcechunkStoreOptions = {}
+    options: IcechunkStoreOptions = {},
   ): Promise<IcechunkStore> {
     if (arg instanceof ReadSession) {
       return new IcechunkStore(arg, options.transformRequest);
     }
 
-    const storage = typeof arg === 'string' ? new HttpStorage(arg) : arg;
-    const requestOptions = options.signal ? { signal: options.signal } : undefined;
-    const repo = await Repository.open({ storage, formatVersion: options.formatVersion }, requestOptions);
+    const storage = typeof arg === "string" ? new HttpStorage(arg) : arg;
+    const requestOptions = options.signal
+      ? { signal: options.signal }
+      : undefined;
+    const repo = await Repository.open(
+      { storage, formatVersion: options.formatVersion },
+      requestOptions,
+    );
 
     let session: ReadSession;
     if (options.snapshot) {
@@ -134,7 +151,10 @@ export class IcechunkStore implements AsyncReadable {
     } else if (options.tag) {
       session = await repo.checkoutTag(options.tag, requestOptions);
     } else {
-      session = await repo.checkoutBranch(options.branch ?? 'main', requestOptions);
+      session = await repo.checkoutBranch(
+        options.branch ?? "main",
+        requestOptions,
+      );
     }
 
     return new IcechunkStore(session, options.transformRequest);
@@ -154,14 +174,14 @@ export class IcechunkStore implements AsyncReadable {
    */
   async get(
     key: AbsolutePath,
-    opts?: { signal?: AbortSignal }
+    opts?: { signal?: AbortSignal },
   ): Promise<Uint8Array | undefined> {
     if (opts?.signal?.aborted) return undefined;
 
     const parsed = parseZarrKey(key);
 
     try {
-      if (parsed.type === 'metadata') {
+      if (parsed.type === "metadata") {
         const data = this.session.getRawMetadata(parsed.path);
         return data ?? undefined;
       }
@@ -187,14 +207,14 @@ export class IcechunkStore implements AsyncReadable {
   async getRange(
     key: AbsolutePath,
     range: RangeQuery,
-    opts?: { signal?: AbortSignal }
+    opts?: { signal?: AbortSignal },
   ): Promise<Uint8Array | undefined> {
     if (opts?.signal?.aborted) return undefined;
 
     const data = await this.get(key, opts);
     if (!data) return undefined;
 
-    if ('suffixLength' in range) {
+    if ("suffixLength" in range) {
       return data.slice(-range.suffixLength);
     }
 
@@ -204,8 +224,8 @@ export class IcechunkStore implements AsyncReadable {
 
 /** Parsed zarr key */
 type ParsedKey =
-  | { type: 'metadata'; path: string }
-  | { type: 'chunk'; path: string; coords: number[] };
+  | { type: "metadata"; path: string }
+  | { type: "chunk"; path: string; coords: number[] };
 
 /**
  * Parse a zarr key into its components.
@@ -220,25 +240,25 @@ function parseZarrKey(key: AbsolutePath): ParsedKey {
   const path = key.slice(1);
 
   // Root metadata
-  if (path === 'zarr.json') {
-    return { type: 'metadata', path: '/' };
+  if (path === "zarr.json") {
+    return { type: "metadata", path: "/" };
   }
 
   // Node metadata
-  if (path.endsWith('/zarr.json')) {
-    const nodePath = '/' + path.slice(0, -'/zarr.json'.length);
-    return { type: 'metadata', path: nodePath };
+  if (path.endsWith("/zarr.json")) {
+    const nodePath = "/" + path.slice(0, -"/zarr.json".length);
+    return { type: "metadata", path: nodePath };
   }
 
   // Chunk key: "path/to/array/c/0/1/2" or "c/0/1/2" for root arrays
   const chunkMatch = path.match(/^(?:(.*)\/)?c(?:\/(.*))?$/);
   if (chunkMatch) {
-    const arrayPath = chunkMatch[1] ? '/' + chunkMatch[1] : '/';
-    const coordsStr = chunkMatch[2] ?? '';
-    const coords = coordsStr ? coordsStr.split('/').map(Number) : [];
-    return { type: 'chunk', path: arrayPath, coords };
+    const arrayPath = chunkMatch[1] ? "/" + chunkMatch[1] : "/";
+    const coordsStr = chunkMatch[2] ?? "";
+    const coords = coordsStr ? coordsStr.split("/").map(Number) : [];
+    return { type: "chunk", path: arrayPath, coords };
   }
 
   // Default to metadata
-  return { type: 'metadata', path: '/' + path };
+  return { type: "metadata", path: "/" + path };
 }

@@ -10,7 +10,7 @@
  */
 
 /** Crockford Base32 encoding alphabet */
-const ENCODE_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+const ENCODE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
 /** Crockford Base32 decoding map (handles lowercase and common substitutions) */
 const DECODE_MAP: Record<string, number> = {};
@@ -23,9 +23,9 @@ for (let i = 0; i < ENCODE_ALPHABET.length; i++) {
 }
 
 // Handle common substitutions
-DECODE_MAP['I'] = DECODE_MAP['i'] = 1; // I → 1
-DECODE_MAP['L'] = DECODE_MAP['l'] = 1; // L → 1
-DECODE_MAP['O'] = DECODE_MAP['o'] = 0; // O → 0
+DECODE_MAP["I"] = DECODE_MAP["i"] = 1; // I → 1
+DECODE_MAP["L"] = DECODE_MAP["l"] = 1; // L → 1
+DECODE_MAP["O"] = DECODE_MAP["o"] = 0; // O → 0
 
 /**
  * Encode bytes to Base32 Crockford string.
@@ -34,9 +34,9 @@ DECODE_MAP['O'] = DECODE_MAP['o'] = 0; // O → 0
  * @returns Base32 Crockford encoded string (uppercase)
  */
 export function encodeBase32(bytes: Uint8Array): string {
-  if (bytes.length === 0) return '';
+  if (bytes.length === 0) return "";
 
-  let result = '';
+  let result = "";
   let buffer = 0;
   let bitsLeft = 0;
 
@@ -71,7 +71,7 @@ export function decodeBase32(str: string): Uint8Array {
   if (str.length === 0) return new Uint8Array(0);
 
   // Remove hyphens (Crockford allows hyphens for readability)
-  str = str.replace(/-/g, '');
+  str = str.replace(/-/g, "");
 
   const result: number[] = [];
   let buffer = 0;

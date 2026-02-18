@@ -2,8 +2,8 @@
  * Repository - Entry point for reading icechunk repositories.
  */
 
-import type { Storage, RequestOptions } from '../storage/storage.js';
-import { NotFoundError, AbortError } from '../storage/storage.js';
+import type { Storage, RequestOptions } from "../storage/storage.js";
+import { NotFoundError, AbortError } from "../storage/storage.js";
 import {
   getBranchRefDirPath,
   getBranchRefPath,
@@ -11,8 +11,8 @@ import {
   getTagRefPath,
   PATHS,
   REPO_INFO_PATH,
-} from '../format/constants.js';
-import { decodeObjectId12 } from '../format/object-id.js';
+} from "../format/constants.js";
+import { decodeObjectId12 } from "../format/object-id.js";
 import {
   parseRepo,
   resolveBranch,
@@ -20,8 +20,8 @@ import {
   listBranchesFromRepo,
   listTagsFromRepo,
   type ParsedRepo,
-} from '../format/flatbuffers/repo-parser.js';
-import { ReadSession } from './session.js';
+} from "../format/flatbuffers/repo-parser.js";
+import { ReadSession } from "./session.js";
 
 /** Reference data stored in ref.json files */
 export interface RefData {
@@ -34,7 +34,7 @@ export interface RepositoryOptions {
   /** Storage backend to use */
   storage: Storage;
   /** Format version hint to skip auto-detection. 'v1' skips /repo request. */
-  formatVersion?: 'v1' | 'v2';
+  formatVersion?: "v1" | "v2";
 }
 
 /**
@@ -65,14 +65,20 @@ export class Repository {
    * @throws Error if repo file exists but fails to parse
    * @throws AbortError if the operation was aborted
    */
-  private async loadRepoInfo(options?: RequestOptions): Promise<ParsedRepo | null> {
+  private async loadRepoInfo(
+    options?: RequestOptions,
+  ): Promise<ParsedRepo | null> {
     if (this.repoInfoAttempted) {
       return this.repoInfo;
     }
     this.repoInfoAttempted = true;
 
     try {
-      const data = await this.storage.getObject(REPO_INFO_PATH, undefined, options);
+      const data = await this.storage.getObject(
+        REPO_INFO_PATH,
+        undefined,
+        options,
+      );
       this.repoInfo = parseRepo(data);
       return this.repoInfo;
     } catch (error) {
@@ -87,7 +93,7 @@ export class Repository {
       }
       // Any other error is fatal
       throw new Error(
-        `Failed to parse v2 repo file: ${error instanceof Error ? error.message : error}`
+        `Failed to parse v2 repo file: ${error instanceof Error ? error.message : error}`,
       );
     }
   }
@@ -103,10 +109,13 @@ export class Repository {
    * @param requestOptions - Optional request options (signal for cancellation)
    * @returns A Repository instance
    */
-  static async open(options: RepositoryOptions, requestOptions?: RequestOptions): Promise<Repository> {
+  static async open(
+    options: RepositoryOptions,
+    requestOptions?: RequestOptions,
+  ): Promise<Repository> {
     const repo = new Repository(options.storage);
 
-    if (options.formatVersion === 'v1') {
+    if (options.formatVersion === "v1") {
       // User asserts v1 format - skip all validation, defer errors to checkout
       repo.repoInfoAttempted = true;
       return repo;
@@ -117,19 +126,23 @@ export class Repository {
     if (repoInfo) {
       return repo; // v2 format - repo file exists and parsed successfully
     }
-    if (options.formatVersion === 'v2') {
-      throw new Error('Repository info not found but v2 format was specified');
+    if (options.formatVersion === "v2") {
+      throw new Error("Repository info not found but v2 format was specified");
     }
 
     // Auto-detect: check for main branch (v1 format)
-    const mainBranchDir = getBranchRefDirPath('main');
-    const mainExists = await repo.hasAnyRefFile(mainBranchDir, getBranchRefPath('main'), requestOptions);
+    const mainBranchDir = getBranchRefDirPath("main");
+    const mainExists = await repo.hasAnyRefFile(
+      mainBranchDir,
+      getBranchRefPath("main"),
+      requestOptions,
+    );
     if (mainExists) {
       return repo;
     }
 
     throw new Error(
-      'Not a valid icechunk repository: neither repo info file nor main branch found'
+      "Not a valid icechunk repository: neither repo info file nor main branch found",
     );
   }
 
@@ -141,10 +154,14 @@ export class Repository {
    * @param legacyPath - Optional legacy ref.json path to check if listing fails
    * @param options - Optional request options (signal for cancellation)
    */
-  private async hasAnyRefFile(dirPrefix: string, legacyPath?: string, options?: RequestOptions): Promise<boolean> {
+  private async hasAnyRefFile(
+    dirPrefix: string,
+    legacyPath?: string,
+    options?: RequestOptions,
+  ): Promise<boolean> {
     try {
       for await (const path of this.storage.listPrefix(dirPrefix)) {
-        if (path.endsWith('.json') && !path.endsWith('.deleted')) {
+        if (path.endsWith(".json") && !path.endsWith(".deleted")) {
           return true;
         }
       }
@@ -173,16 +190,19 @@ export class Repository {
    * @param dirPrefix - Directory prefix to search
    * @param legacyPath - Optional legacy ref.json path to try if listing fails
    */
-  private async findLatestRefFile(dirPrefix: string, legacyPath?: string): Promise<string | null> {
+  private async findLatestRefFile(
+    dirPrefix: string,
+    legacyPath?: string,
+  ): Promise<string | null> {
     const jsonFiles: string[] = [];
     const deletedFiles = new Set<string>();
 
     try {
       for await (const path of this.storage.listPrefix(dirPrefix)) {
-        if (path.endsWith('.deleted')) {
+        if (path.endsWith(".deleted")) {
           // Track deletion tombstones (e.g., "ABC.json.deleted" -> "ABC.json")
-          deletedFiles.add(path.slice(0, -'.deleted'.length));
-        } else if (path.endsWith('.json')) {
+          deletedFiles.add(path.slice(0, -".deleted".length));
+        } else if (path.endsWith(".json")) {
           jsonFiles.push(path);
         }
       }
@@ -230,34 +250,47 @@ export class Repository {
 
     // V1 fallback - file-based lookup
     // Track files per branch: branch name -> { jsonFiles, deletedFiles }
-    const branchFiles = new Map<string, { jsonFiles: string[]; deletedFiles: Set<string> }>();
+    const branchFiles = new Map<
+      string,
+      { jsonFiles: string[]; deletedFiles: Set<string> }
+    >();
 
     try {
-      for await (const path of this.storage.listPrefix(`${PATHS.REFS}/branch.`)) {
+      for await (const path of this.storage.listPrefix(
+        `${PATHS.REFS}/branch.`,
+      )) {
         // Extract branch name from paths like:
         // - "refs/branch.main/ZZZZZZZZ.json" (versioned)
         // - "refs/branch.main/ref.json" (legacy)
         // - "refs/branch.main/ZZZZZZZZ.json.deleted" (deletion tombstone)
         const jsonMatch = path.match(/^refs\/branch\.(.+)\/([^/]+\.json)$/);
-        const deletedMatch = path.match(/^refs\/branch\.(.+)\/([^/]+\.json)\.deleted$/);
+        const deletedMatch = path.match(
+          /^refs\/branch\.(.+)\/([^/]+\.json)\.deleted$/,
+        );
 
         if (deletedMatch) {
           const branchName = deletedMatch[1];
           const refFile = `refs/branch.${branchName}/${deletedMatch[2]}`;
           if (!branchFiles.has(branchName)) {
-            branchFiles.set(branchName, { jsonFiles: [], deletedFiles: new Set() });
+            branchFiles.set(branchName, {
+              jsonFiles: [],
+              deletedFiles: new Set(),
+            });
           }
           branchFiles.get(branchName)!.deletedFiles.add(refFile);
         } else if (jsonMatch) {
           const branchName = jsonMatch[1];
           if (!branchFiles.has(branchName)) {
-            branchFiles.set(branchName, { jsonFiles: [], deletedFiles: new Set() });
+            branchFiles.set(branchName, {
+              jsonFiles: [],
+              deletedFiles: new Set(),
+            });
           }
           branchFiles.get(branchName)!.jsonFiles.push(path);
         }
       }
     } catch {
-      throw new Error('Cannot list branches: storage does not support listing');
+      throw new Error("Cannot list branches: storage does not support listing");
     }
 
     // Filter to only include branches where latest ref is not deleted
@@ -294,7 +327,10 @@ export class Repository {
 
     // V1 fallback - file-based lookup
     // Track files per tag: tag name -> { jsonFiles, deletedFiles }
-    const tagFiles = new Map<string, { jsonFiles: string[]; deletedFiles: Set<string> }>();
+    const tagFiles = new Map<
+      string,
+      { jsonFiles: string[]; deletedFiles: Set<string> }
+    >();
 
     try {
       for await (const path of this.storage.listPrefix(`${PATHS.REFS}/tag.`)) {
@@ -303,7 +339,9 @@ export class Repository {
         // - "refs/tag.v1.0/ref.json" (legacy)
         // - "refs/tag.v1.0/ZZZZZZZZ.json.deleted" (deletion tombstone)
         const jsonMatch = path.match(/^refs\/tag\.(.+)\/([^/]+\.json)$/);
-        const deletedMatch = path.match(/^refs\/tag\.(.+)\/([^/]+\.json)\.deleted$/);
+        const deletedMatch = path.match(
+          /^refs\/tag\.(.+)\/([^/]+\.json)\.deleted$/,
+        );
 
         if (deletedMatch) {
           const tagName = deletedMatch[1];
@@ -321,7 +359,7 @@ export class Repository {
         }
       }
     } catch {
-      throw new Error('Cannot list tags: storage does not support listing');
+      throw new Error("Cannot list tags: storage does not support listing");
     }
 
     // Filter to only include tags where latest ref is not deleted
@@ -349,7 +387,10 @@ export class Repository {
    * @param options - Optional request options (signal for cancellation)
    * @returns Read session at the branch's current snapshot
    */
-  async checkoutBranch(name: string, options?: RequestOptions): Promise<ReadSession> {
+  async checkoutBranch(
+    name: string,
+    options?: RequestOptions,
+  ): Promise<ReadSession> {
     // Try v2 format first
     const repoInfo = await this.loadRepoInfo(options);
     if (repoInfo) {
@@ -362,7 +403,10 @@ export class Repository {
 
     // V1 fallback - file-based lookup
     const refDirPath = getBranchRefDirPath(name);
-    const refPath = await this.findLatestRefFile(refDirPath, getBranchRefPath(name));
+    const refPath = await this.findLatestRefFile(
+      refDirPath,
+      getBranchRefPath(name),
+    );
     if (!refPath) {
       throw new Error(`Reference not found: ${refDirPath}`);
     }
@@ -377,7 +421,10 @@ export class Repository {
    * @param options - Optional request options (signal for cancellation)
    * @returns Read session at the tag's snapshot
    */
-  async checkoutTag(name: string, options?: RequestOptions): Promise<ReadSession> {
+  async checkoutTag(
+    name: string,
+    options?: RequestOptions,
+  ): Promise<ReadSession> {
     // Try v2 format first
     const repoInfo = await this.loadRepoInfo(options);
     if (repoInfo) {
@@ -398,7 +445,10 @@ export class Repository {
 
     // Check for tombstone only in no-list fallback path (list-capable storage
     // already handles tombstones in findLatestRefFile). Matches Rust behavior.
-    if (refPath === legacyPath && await this.storage.exists(`${refPath}.deleted`, options)) {
+    if (
+      refPath === legacyPath &&
+      (await this.storage.exists(`${refPath}.deleted`, options))
+    ) {
       throw new Error(`Tag not found: ${name}`);
     }
 
@@ -413,10 +463,14 @@ export class Repository {
    * @param options - Optional request options (signal for cancellation)
    * @returns Read session at the specified snapshot
    */
-  async checkoutSnapshot(snapshotId: Uint8Array | string, options?: RequestOptions): Promise<ReadSession> {
-    const id = typeof snapshotId === 'string'
-      ? decodeObjectId12(snapshotId)
-      : snapshotId;
+  async checkoutSnapshot(
+    snapshotId: Uint8Array | string,
+    options?: RequestOptions,
+  ): Promise<ReadSession> {
+    const id =
+      typeof snapshotId === "string"
+        ? decodeObjectId12(snapshotId)
+        : snapshotId;
     return ReadSession.open(this.storage, id, options);
   }
 
@@ -428,14 +482,20 @@ export class Repository {
   }
 
   /** Read and parse a ref file */
-  private async readRef(path: string, options?: RequestOptions): Promise<RefData> {
+  private async readRef(
+    path: string,
+    options?: RequestOptions,
+  ): Promise<RefData> {
     const data = await this.storage.getObject(path, undefined, options);
     const json = new TextDecoder().decode(data);
     return JSON.parse(json) as RefData;
   }
 
   /** Read snapshot ID from a ref file */
-  private async readSnapshotIdFromRef(path: string, options?: RequestOptions): Promise<Uint8Array> {
+  private async readSnapshotIdFromRef(
+    path: string,
+    options?: RequestOptions,
+  ): Promise<Uint8Array> {
     try {
       const ref = await this.readRef(path, options);
       return decodeObjectId12(ref.snapshot);

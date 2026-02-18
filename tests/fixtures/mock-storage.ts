@@ -2,16 +2,20 @@
  * Mock storage for testing.
  */
 
-import type { Storage, ByteRange, RequestOptions } from '../../src/storage/storage.js';
-import { NotFoundError, StorageError } from '../../src/storage/storage.js';
+import type {
+  Storage,
+  ByteRange,
+  RequestOptions,
+} from "../../src/storage/storage.js";
+import { NotFoundError, StorageError } from "../../src/storage/storage.js";
 import {
   HEADER_SIZE,
   MAGIC_BYTES,
   SpecVersion,
   FileType,
   CompressionAlgorithm,
-} from '../../src/format/header.js';
-import { encodeObjectId12 } from '../../src/format/object-id.js';
+} from "../../src/format/header.js";
+import { encodeObjectId12 } from "../../src/format/object-id.js";
 
 /** Files stored in the mock storage */
 export interface MockFiles {
@@ -51,7 +55,7 @@ export class MockStorage implements Storage {
     for (const [path, data] of Object.entries(files)) {
       if (data instanceof Uint8Array) {
         this.files.set(path, data);
-      } else if (typeof data === 'string') {
+      } else if (typeof data === "string") {
         this.files.set(path, new TextEncoder().encode(data));
       } else {
         this.files.set(path, new TextEncoder().encode(JSON.stringify(data)));
@@ -63,7 +67,7 @@ export class MockStorage implements Storage {
   addFile(path: string, data: Uint8Array | string | object): void {
     if (data instanceof Uint8Array) {
       this.files.set(path, data);
-    } else if (typeof data === 'string') {
+    } else if (typeof data === "string") {
       this.files.set(path, new TextEncoder().encode(data));
     } else {
       this.files.set(path, new TextEncoder().encode(JSON.stringify(data)));
@@ -75,7 +79,11 @@ export class MockStorage implements Storage {
     return [...this.files.keys()];
   }
 
-  async getObject(path: string, range?: ByteRange, _options?: RequestOptions): Promise<Uint8Array> {
+  async getObject(
+    path: string,
+    range?: ByteRange,
+    _options?: RequestOptions,
+  ): Promise<Uint8Array> {
     this._requestLog.push(`getObject:${path}`);
     const data = this.files.get(path);
     if (!data) {
@@ -108,26 +116,28 @@ export class MockStorage implements Storage {
  */
 export class MockStorageNoList extends MockStorage {
   async *listPrefix(_prefix: string): AsyncIterable<string> {
-    throw new StorageError('Listing not supported over HTTP');
+    throw new StorageError("Listing not supported over HTTP");
   }
 }
 
 /**
  * Create a valid icechunk file header.
  */
-export function createMockHeader(options: {
-  implementation?: string;
-  specVersion?: SpecVersion;
-  fileType?: FileType;
-  compression?: CompressionAlgorithm;
-} = {}): Uint8Array {
+export function createMockHeader(
+  options: {
+    implementation?: string;
+    specVersion?: SpecVersion;
+    fileType?: FileType;
+    compression?: CompressionAlgorithm;
+  } = {},
+): Uint8Array {
   const buffer = new Uint8Array(HEADER_SIZE);
 
   // Magic bytes: "ICE🧊CHUNK"
   buffer.set(MAGIC_BYTES, 0);
 
   // Implementation (24 bytes, space-padded)
-  const impl = (options.implementation ?? 'test-impl').padEnd(24, ' ');
+  const impl = (options.implementation ?? "test-impl").padEnd(24, " ");
   buffer.set(new TextEncoder().encode(impl), 12);
 
   // Spec version, file type, compression
@@ -186,34 +196,36 @@ export function createMockChunkId(seed: number = 0): Uint8Array {
 /**
  * Create Zarr v3 array metadata JSON.
  */
-export function createMockArrayMetadata(options: {
-  shape?: number[];
-  chunks?: number[];
-  dtype?: string;
-  fillValue?: unknown;
-} = {}): object {
+export function createMockArrayMetadata(
+  options: {
+    shape?: number[];
+    chunks?: number[];
+    dtype?: string;
+    fillValue?: unknown;
+  } = {},
+): object {
   const shape = options.shape ?? [100, 100];
   const chunks = options.chunks ?? [10, 10];
 
   return {
     zarr_format: 3,
-    node_type: 'array',
+    node_type: "array",
     shape,
-    data_type: options.dtype ?? 'float32',
+    data_type: options.dtype ?? "float32",
     chunk_grid: {
-      name: 'regular',
+      name: "regular",
       configuration: {
         chunk_shape: chunks,
       },
     },
     chunk_key_encoding: {
-      name: 'default',
+      name: "default",
       configuration: {
-        separator: '/',
+        separator: "/",
       },
     },
     fill_value: options.fillValue ?? 0,
-    codecs: [{ name: 'bytes', configuration: { endian: 'little' } }],
+    codecs: [{ name: "bytes", configuration: { endian: "little" } }],
   };
 }
 
@@ -223,7 +235,7 @@ export function createMockArrayMetadata(options: {
 export function createMockGroupMetadata(): object {
   return {
     zarr_format: 3,
-    node_type: 'group',
+    node_type: "group",
   };
 }
 
@@ -338,17 +350,19 @@ class FlatBufferBuilder {
  *
  * This creates a valid snapshot that can be parsed by parseSnapshot().
  */
-export function buildMinimalSnapshot(options: {
-  id: Uint8Array;
-  message?: string;
-  flushedAt?: bigint;
-  nodes?: Array<{
+export function buildMinimalSnapshot(
+  options: {
     id: Uint8Array;
-    path: string;
-    userData: Uint8Array;
-    isArray?: boolean;
-  }>;
-} = { id: createMockSnapshotId() }): Uint8Array {
+    message?: string;
+    flushedAt?: bigint;
+    nodes?: Array<{
+      id: Uint8Array;
+      path: string;
+      userData: Uint8Array;
+      isArray?: boolean;
+    }>;
+  } = { id: createMockSnapshotId() },
+): Uint8Array {
   // FlatBuffers are complex - we need to build:
   // 1. Vtable
   // 2. Table with offsets to strings/vectors
@@ -360,7 +374,7 @@ export function buildMinimalSnapshot(options: {
   fb.writeUint32(0);
 
   // Write strings and vectors first
-  const messageOffset = fb.writeString(options.message ?? 'test commit');
+  const messageOffset = fb.writeString(options.message ?? "test commit");
 
   // Write nodes if any
   const nodeOffsets: number[] = [];
@@ -390,7 +404,6 @@ export function buildMinimalSnapshot(options: {
     fb.writeBytes(node.id); // id (8 bytes inline)
 
     // Write path offset (relative)
-    const pathRelOffset = pathOffset - fb.getOffset();
     fb.writeUint32(fb.getOffset() - pathOffset);
 
     // Write userData offset (relative)
@@ -463,10 +476,12 @@ export function buildMinimalSnapshot(options: {
  * version that may not work with all parsers. For full testing, consider
  * using real fixtures generated from the Rust implementation.
  */
-export function createMockSnapshotFile(options: {
-  id?: Uint8Array;
-  message?: string;
-} = {}): Uint8Array {
+export function createMockSnapshotFile(
+  _options: {
+    id?: Uint8Array;
+    message?: string;
+  } = {},
+): Uint8Array {
   const header = createMockHeader({
     fileType: FileType.Snapshot,
     specVersion: SpecVersion.V1_0,

@@ -4,7 +4,7 @@
  * Field indices based on manifest.fbs schema order.
  */
 
-import { parseRootTable, TableReader } from './reader.js';
+import { parseRootTable, TableReader } from "./reader.js";
 import {
   asObjectId12,
   asObjectId8,
@@ -13,7 +13,7 @@ import {
   type ChunkRef,
   type ChunkPayload,
   type ObjectId8,
-} from './types.js';
+} from "./types.js";
 
 // Manifest field indices
 const MANIFEST_ID = 0;
@@ -43,7 +43,7 @@ export function parseManifest(data: Uint8Array): Manifest {
 
   // Parse ID (required)
   const idBytes = root.readInlineStruct(MANIFEST_ID, OBJECT_ID_12_SIZE);
-  if (!idBytes) throw new Error('Manifest missing required id field');
+  if (!idBytes) throw new Error("Manifest missing required id field");
   const id = asObjectId12(idBytes);
 
   // Parse arrays
@@ -61,8 +61,12 @@ export function parseManifest(data: Uint8Array): Manifest {
 
 function parseArrayManifest(table: TableReader): ArrayManifest {
   // Parse node_id (required)
-  const nodeIdBytes = table.readInlineStruct(ARRAY_MANIFEST_NODE_ID, OBJECT_ID_8_SIZE);
-  if (!nodeIdBytes) throw new Error('ArrayManifest missing required node_id field');
+  const nodeIdBytes = table.readInlineStruct(
+    ARRAY_MANIFEST_NODE_ID,
+    OBJECT_ID_8_SIZE,
+  );
+  if (!nodeIdBytes)
+    throw new Error("ArrayManifest missing required node_id field");
   const nodeId = asObjectId8(nodeIdBytes);
 
   // Parse refs
@@ -90,7 +94,10 @@ function parseChunkRef(table: TableReader): ChunkRef {
   const length = Number(table.readUint64(CHUNK_REF_LENGTH, 0n));
 
   // Parse chunk_id (optional inline struct)
-  const chunkIdBytes = table.readInlineStruct(CHUNK_REF_CHUNK_ID, OBJECT_ID_12_SIZE);
+  const chunkIdBytes = table.readInlineStruct(
+    CHUNK_REF_CHUNK_ID,
+    OBJECT_ID_12_SIZE,
+  );
   const chunkId = chunkIdBytes ? asObjectId12(chunkIdBytes) : null;
 
   // Parse location (optional string)
@@ -98,7 +105,10 @@ function parseChunkRef(table: TableReader): ChunkRef {
 
   // Parse checksum fields
   const checksumEtag = table.readString(CHUNK_REF_CHECKSUM_ETAG);
-  const checksumLastModified = table.readUint32(CHUNK_REF_CHECKSUM_LAST_MODIFIED, 0);
+  const checksumLastModified = table.readUint32(
+    CHUNK_REF_CHECKSUM_LAST_MODIFIED,
+    0,
+  );
 
   return {
     index,
@@ -120,7 +130,7 @@ function parseChunkRef(table: TableReader): ChunkRef {
 export function findChunkRef(
   manifest: Manifest,
   nodeId: ObjectId8,
-  coords: number[]
+  coords: number[],
 ): ChunkRef | null {
   // Binary search for the array manifest (arrays are sorted by nodeId)
   const arrayManifest = binarySearchArrayManifest(manifest.arrays, nodeId);
@@ -134,7 +144,7 @@ export function findChunkRef(
 /** Binary search for an array manifest by node ID */
 function binarySearchArrayManifest(
   arrays: ArrayManifest[],
-  nodeId: ObjectId8
+  nodeId: ObjectId8,
 ): ArrayManifest | null {
   let low = 0;
   let high = arrays.length - 1;
@@ -174,7 +184,10 @@ function compareCoords(a: number[], b: number[]): number {
 }
 
 /** Binary search for a chunk ref by coordinates */
-function binarySearchChunkRef(refs: ChunkRef[], coords: number[]): ChunkRef | null {
+function binarySearchChunkRef(
+  refs: ChunkRef[],
+  coords: number[],
+): ChunkRef | null {
   let low = 0;
   let high = refs.length - 1;
 
@@ -197,12 +210,12 @@ function binarySearchChunkRef(refs: ChunkRef[], coords: number[]): ChunkRef | nu
 /** Extract the payload type from a ChunkRef */
 export function getChunkPayload(ref: ChunkRef): ChunkPayload {
   if (ref.inline !== null) {
-    return { type: 'inline', data: ref.inline };
+    return { type: "inline", data: ref.inline };
   }
 
   if (ref.chunkId !== null) {
     return {
-      type: 'native',
+      type: "native",
       chunkId: ref.chunkId,
       offset: ref.offset,
       length: ref.length,
@@ -211,7 +224,7 @@ export function getChunkPayload(ref: ChunkRef): ChunkPayload {
 
   if (ref.location !== null) {
     return {
-      type: 'virtual',
+      type: "virtual",
       location: ref.location,
       offset: ref.offset,
       length: ref.length,
@@ -220,5 +233,5 @@ export function getChunkPayload(ref: ChunkRef): ChunkPayload {
     };
   }
 
-  throw new Error('Invalid ChunkRef: no inline, chunkId, or location');
+  throw new Error("Invalid ChunkRef: no inline, chunkId, or location");
 }

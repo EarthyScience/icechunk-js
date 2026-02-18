@@ -4,8 +4,8 @@
  * Works in both Node.js 18+ and browsers.
  */
 
-import type { Storage, ByteRange, RequestOptions } from './storage.js';
-import { NotFoundError, StorageError, AbortError } from './storage.js';
+import type { Storage, ByteRange, RequestOptions } from "./storage.js";
+import { NotFoundError, StorageError, AbortError } from "./storage.js";
 
 /** Options for HTTP storage */
 export interface HttpStorageOptions {
@@ -37,14 +37,14 @@ export class HttpStorage implements Storage {
    */
   constructor(baseUrl: string, options: HttpStorageOptions = {}) {
     // Normalize URL (remove trailing slash)
-    this.baseUrl = baseUrl.replace(/\/$/, '');
+    this.baseUrl = baseUrl.replace(/\/$/, "");
     this.options = options;
   }
 
   /** Build full URL for a path */
   private getUrl(path: string): string {
     // Ensure path doesn't start with slash (we add it)
-    const normalizedPath = path.startsWith('/') ? path.slice(1) : path;
+    const normalizedPath = path.startsWith("/") ? path.slice(1) : path;
     return `${this.baseUrl}/${normalizedPath}`;
   }
 
@@ -54,13 +54,17 @@ export class HttpStorage implements Storage {
 
     if (range) {
       // HTTP Range header uses inclusive end
-      headers['Range'] = `bytes=${range.start}-${range.end - 1}`;
+      headers["Range"] = `bytes=${range.start}-${range.end - 1}`;
     }
 
     return headers;
   }
 
-  async getObject(path: string, range?: ByteRange, options?: RequestOptions): Promise<Uint8Array> {
+  async getObject(
+    path: string,
+    range?: ByteRange,
+    options?: RequestOptions,
+  ): Promise<Uint8Array> {
     // Early abort check
     if (options?.signal?.aborted) {
       throw new AbortError();
@@ -72,7 +76,7 @@ export class HttpStorage implements Storage {
     let response: Response;
     try {
       response = await fetch(url, {
-        method: 'GET',
+        method: "GET",
         headers,
         credentials: this.options.credentials,
         cache: this.options.cache,
@@ -80,12 +84,12 @@ export class HttpStorage implements Storage {
       });
     } catch (error) {
       // Translate abort errors to our class (handles DOMException and other implementations)
-      if (error instanceof Error && error.name === 'AbortError') {
+      if (error instanceof Error && error.name === "AbortError") {
         throw new AbortError();
       }
       throw new StorageError(
         `Failed to fetch ${url}: ${error instanceof Error ? error.message : String(error)}`,
-        error instanceof Error ? error : undefined
+        error instanceof Error ? error : undefined,
       );
     }
 
@@ -96,7 +100,7 @@ export class HttpStorage implements Storage {
     // 200 for full content, 206 for partial content
     if (response.status !== 200 && response.status !== 206) {
       throw new StorageError(
-        `HTTP ${response.status} ${response.statusText} for ${url}`
+        `HTTP ${response.status} ${response.statusText} for ${url}`,
       );
     }
 
@@ -114,7 +118,7 @@ export class HttpStorage implements Storage {
 
     try {
       const response = await fetch(url, {
-        method: 'HEAD',
+        method: "HEAD",
         headers: this.options.headers,
         credentials: this.options.credentials,
         signal: options?.signal,
@@ -123,7 +127,7 @@ export class HttpStorage implements Storage {
       return response.ok;
     } catch (error) {
       // Rethrow abort errors (handles DOMException and other implementations)
-      if (error instanceof Error && error.name === 'AbortError') {
+      if (error instanceof Error && error.name === "AbortError") {
         throw new AbortError();
       }
       return false;
@@ -134,7 +138,7 @@ export class HttpStorage implements Storage {
     // HTTP storage typically doesn't support listing.
     // This would require server-side support (e.g., S3 XML API).
     throw new StorageError(
-      'Listing not supported for HTTP storage. Use S3Storage for listing.'
+      "Listing not supported for HTTP storage. Use S3Storage for listing.",
     );
   }
 }

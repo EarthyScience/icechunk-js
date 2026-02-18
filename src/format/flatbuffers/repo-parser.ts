@@ -4,8 +4,8 @@
  * Field indices based on repo.fbs schema order.
  */
 
-import { parseRootTable, TableReader } from './reader.js';
-import { decompress } from 'fzstd';
+import { parseRootTable, TableReader } from "./reader.js";
+import { decompress } from "fzstd";
 import {
   parseHeader,
   getDataAfterHeader,
@@ -13,7 +13,7 @@ import {
   validateFileType,
   CompressionAlgorithm,
   HEADER_SIZE,
-} from '../header.js';
+} from "../header.js";
 
 // Repo table fields
 const REPO_SPEC_VERSION = 0; // uint8 per schema
@@ -47,7 +47,9 @@ export interface ParsedRepo {
 export function parseRepo(data: Uint8Array): ParsedRepo {
   // Validate minimum size
   if (data.length < HEADER_SIZE) {
-    throw new Error(`Repo file too small: ${data.length} bytes, need at least ${HEADER_SIZE}`);
+    throw new Error(
+      `Repo file too small: ${data.length} bytes, need at least ${HEADER_SIZE}`,
+    );
   }
 
   // Parse and validate icechunk header
@@ -66,7 +68,7 @@ export function parseRepo(data: Uint8Array): ParsedRepo {
 
   if (specVersion !== SUPPORTED_SPEC_VERSION) {
     throw new Error(
-      `Unsupported repo spec version: ${specVersion}, expected ${SUPPORTED_SPEC_VERSION}`
+      `Unsupported repo spec version: ${specVersion}, expected ${SUPPORTED_SPEC_VERSION}`,
     );
   }
 
@@ -98,7 +100,7 @@ function compareUtf8ByteOrder(aBytes: Uint8Array, bBytes: Uint8Array): number {
 function binarySearchRef(
   repo: ParsedRepo,
   fieldIndex: number,
-  name: string
+  name: string,
 ): Uint8Array | null {
   const { root, snapshotsLength } = repo;
   const length = root.getVectorLength(fieldIndex);
@@ -137,7 +139,7 @@ function binarySearchRef(
       if (snapshotIndex >= snapshotsLength) {
         throw new Error(
           `Invalid snapshot index ${snapshotIndex} for ref '${name}', ` +
-            `snapshots array has ${snapshotsLength} entries`
+            `snapshots array has ${snapshotsLength} entries`,
         );
       }
 
@@ -159,7 +161,10 @@ function getSnapshotIdByIndex(root: TableReader, index: number): Uint8Array {
     throw new Error(`Corrupted repo file: null snapshot at index ${index}`);
   }
 
-  const idBytes = snapshotTable.readInlineStruct(SNAPSHOT_INFO_ID, OBJECT_ID_12_SIZE);
+  const idBytes = snapshotTable.readInlineStruct(
+    SNAPSHOT_INFO_ID,
+    OBJECT_ID_12_SIZE,
+  );
   if (!idBytes) {
     throw new Error(`Corrupted repo file: snapshot ${index} missing id`);
   }
@@ -196,7 +201,10 @@ function listRefs(root: TableReader, fieldIndex: number): string[] {
  *
  * @returns Snapshot ID bytes if found, null otherwise
  */
-export function resolveBranch(repo: ParsedRepo, name: string): Uint8Array | null {
+export function resolveBranch(
+  repo: ParsedRepo,
+  name: string,
+): Uint8Array | null {
   return binarySearchRef(repo, REPO_BRANCHES, name);
 }
 

@@ -14,7 +14,7 @@ export interface ByteRange {
 /** Options passed to the transformRequest callback */
 export interface TransformRequestOptions {
   /** HTTP method for the request */
-  method?: 'GET' | 'HEAD';
+  method?: "GET" | "HEAD";
 }
 
 /** Result returned by the transformRequest callback */
@@ -24,7 +24,7 @@ export interface TransformRequestResult {
   /** Additional headers to include in the request */
   headers?: Record<string, string>;
   /** HTTP method to use (defaults to GET) */
-  method?: 'GET' | 'HEAD';
+  method?: "GET" | "HEAD";
   /** Allow other RequestInit options to be passed through */
   [key: string]: unknown;
 }
@@ -43,7 +43,7 @@ export interface TransformRequestResult {
  */
 export type TransformRequest = (
   url: string,
-  options?: TransformRequestOptions
+  options?: TransformRequestOptions,
 ) => TransformRequestResult | Promise<TransformRequestResult>;
 
 /** Options for storage request operations */
@@ -58,23 +58,26 @@ export interface RequestOptions {
 export class NotFoundError extends Error {
   constructor(public readonly path: string) {
     super(`Object not found: ${path}`);
-    this.name = 'NotFoundError';
+    this.name = "NotFoundError";
   }
 }
 
 /** Error thrown for storage operations */
 export class StorageError extends Error {
-  constructor(message: string, public readonly cause?: Error) {
+  constructor(
+    message: string,
+    public readonly cause?: Error,
+  ) {
     super(message);
-    this.name = 'StorageError';
+    this.name = "StorageError";
   }
 }
 
 /** Error thrown when an operation is aborted */
 export class AbortError extends Error {
-  constructor(message = 'Operation aborted') {
+  constructor(message = "Operation aborted") {
     super(message);
-    this.name = 'AbortError';
+    this.name = "AbortError";
   }
 }
 
@@ -95,7 +98,11 @@ export interface Storage {
    * @throws StorageError for other errors
    * @throws AbortError if the operation was aborted
    */
-  getObject(path: string, range?: ByteRange, options?: RequestOptions): Promise<Uint8Array>;
+  getObject(
+    path: string,
+    range?: ByteRange,
+    options?: RequestOptions,
+  ): Promise<Uint8Array>;
 
   /**
    * Check if an object exists.

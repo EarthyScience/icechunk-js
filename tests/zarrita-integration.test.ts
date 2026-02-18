@@ -14,21 +14,21 @@
  * Tests read rows 5-10 to avoid the virtual chunk.
  */
 
-import { describe, it, expect } from 'vitest';
-import * as z from 'zarrita';
-import { IcechunkStore } from '../src/index.js';
-import { getFixtureUrl } from './helpers.js';
+import { describe, it, expect } from "vitest";
+import * as z from "zarrita";
+import { IcechunkStore } from "../src/index.js";
+import { getFixtureUrl } from "./helpers.js";
 
-describe('Zarrita Integration', () => {
-  describe('v1 format', () => {
-    describe('read array data', () => {
-      it('should read array with correct shape, dtype, and values', async () => {
-        const store = await IcechunkStore.open(getFixtureUrl('test-repo-v1'));
-        const location = z.root(store).resolve('/group1/small_chunks');
-        const arr = await z.open(location, { kind: 'array' });
+describe("Zarrita Integration", () => {
+  describe("v1 format", () => {
+    describe("read array data", () => {
+      it("should read array with correct shape, dtype, and values", async () => {
+        const store = await IcechunkStore.open(getFixtureUrl("test-repo-v1"));
+        const location = z.root(store).resolve("/group1/small_chunks");
+        const arr = await z.open(location, { kind: "array" });
 
         expect(arr.shape).toEqual([5]);
-        expect(arr.dtype).toBe('int8');
+        expect(arr.dtype).toBe("int8");
         expect(arr.chunks).toEqual([1]);
 
         const data = await z.get(arr);
@@ -38,10 +38,10 @@ describe('Zarrita Integration', () => {
         }
       });
 
-      it('should read 2D array slice', async () => {
-        const store = await IcechunkStore.open(getFixtureUrl('test-repo-v1'));
-        const location = z.root(store).resolve('/group1/big_chunks');
-        const arr = await z.open(location, { kind: 'array' });
+      it("should read 2D array slice", async () => {
+        const store = await IcechunkStore.open(getFixtureUrl("test-repo-v1"));
+        const location = z.root(store).resolve("/group1/big_chunks");
+        const arr = await z.open(location, { kind: "array" });
 
         // Read rows 5-10 (avoids virtual chunk [0,0])
         const data = await z.get(arr, [{ start: 5, stop: 10 }, null]);
@@ -53,54 +53,62 @@ describe('Zarrita Integration', () => {
       });
     });
 
-    describe('groups', () => {
-      it('should open root group', async () => {
-        const store = await IcechunkStore.open(getFixtureUrl('test-repo-v1'));
-        const group = await z.open(store, { kind: 'group' });
+    describe("groups", () => {
+      it("should open root group", async () => {
+        const store = await IcechunkStore.open(getFixtureUrl("test-repo-v1"));
+        const group = await z.open(store, { kind: "group" });
         expect(group).toBeDefined();
       });
 
-      it('should open deeply nested structure on branch', async () => {
-        const store = await IcechunkStore.open(getFixtureUrl('test-repo-v1'), {
-          branch: 'my-branch',
+      it("should open deeply nested structure on branch", async () => {
+        const store = await IcechunkStore.open(getFixtureUrl("test-repo-v1"), {
+          branch: "my-branch",
         });
-        const location = z.root(store).resolve('/group2/group3/group4/group5/inner');
-        const arr = await z.open(location, { kind: 'array' });
+        const location = z
+          .root(store)
+          .resolve("/group2/group3/group4/group5/inner");
+        const arr = await z.open(location, { kind: "array" });
 
         expect(arr.shape).toEqual([10, 10]);
-        expect(arr.dtype).toBe('float32');
+        expect(arr.dtype).toBe("float32");
       });
     });
 
-    describe('time travel', () => {
-      it('should access different structure on different branches', async () => {
+    describe("time travel", () => {
+      it("should access different structure on different branches", async () => {
         // main branch does NOT have group2
-        const storeMain = await IcechunkStore.open(getFixtureUrl('test-repo-v1'), {
-          branch: 'main',
-        });
-        const locationMain = z.root(storeMain).resolve('/group2');
-        await expect(z.open(locationMain, { kind: 'group' })).rejects.toThrow();
+        const storeMain = await IcechunkStore.open(
+          getFixtureUrl("test-repo-v1"),
+          {
+            branch: "main",
+          },
+        );
+        const locationMain = z.root(storeMain).resolve("/group2");
+        await expect(z.open(locationMain, { kind: "group" })).rejects.toThrow();
 
         // my-branch DOES have group2
-        const storeBranch = await IcechunkStore.open(getFixtureUrl('test-repo-v1'), {
-          branch: 'my-branch',
-        });
-        const locationBranch = z.root(storeBranch).resolve('/group2');
-        const group = await z.open(locationBranch, { kind: 'group' });
+        const storeBranch = await IcechunkStore.open(
+          getFixtureUrl("test-repo-v1"),
+          {
+            branch: "my-branch",
+          },
+        );
+        const locationBranch = z.root(storeBranch).resolve("/group2");
+        const group = await z.open(locationBranch, { kind: "group" });
         expect(group).toBeDefined();
       });
 
-      it('should open different snapshots via tags', async () => {
-        const store1 = await IcechunkStore.open(getFixtureUrl('test-repo-v1'), {
-          tag: 'it works!',
+      it("should open different snapshots via tags", async () => {
+        const store1 = await IcechunkStore.open(getFixtureUrl("test-repo-v1"), {
+          tag: "it works!",
         });
-        const store2 = await IcechunkStore.open(getFixtureUrl('test-repo-v1'), {
-          tag: 'it also works!',
+        const store2 = await IcechunkStore.open(getFixtureUrl("test-repo-v1"), {
+          tag: "it also works!",
         });
 
         // Both should open successfully (they point to different snapshots)
-        const group1 = await z.open(store1, { kind: 'group' });
-        const group2 = await z.open(store2, { kind: 'group' });
+        const group1 = await z.open(store1, { kind: "group" });
+        const group2 = await z.open(store2, { kind: "group" });
 
         expect(group1).toBeDefined();
         expect(group2).toBeDefined();
@@ -108,15 +116,15 @@ describe('Zarrita Integration', () => {
     });
   });
 
-  describe('v2 format', () => {
-    describe('read array data', () => {
-      it('should read array with correct shape, dtype, and values', async () => {
-        const store = await IcechunkStore.open(getFixtureUrl('test-repo-v2'));
-        const location = z.root(store).resolve('/group1/small_chunks');
-        const arr = await z.open(location, { kind: 'array' });
+  describe("v2 format", () => {
+    describe("read array data", () => {
+      it("should read array with correct shape, dtype, and values", async () => {
+        const store = await IcechunkStore.open(getFixtureUrl("test-repo-v2"));
+        const location = z.root(store).resolve("/group1/small_chunks");
+        const arr = await z.open(location, { kind: "array" });
 
         expect(arr.shape).toEqual([5]);
-        expect(arr.dtype).toBe('int8');
+        expect(arr.dtype).toBe("int8");
         expect(arr.chunks).toEqual([1]);
 
         const data = await z.get(arr);
@@ -126,10 +134,10 @@ describe('Zarrita Integration', () => {
         }
       });
 
-      it('should read 2D array slice', async () => {
-        const store = await IcechunkStore.open(getFixtureUrl('test-repo-v2'));
-        const location = z.root(store).resolve('/group1/big_chunks');
-        const arr = await z.open(location, { kind: 'array' });
+      it("should read 2D array slice", async () => {
+        const store = await IcechunkStore.open(getFixtureUrl("test-repo-v2"));
+        const location = z.root(store).resolve("/group1/big_chunks");
+        const arr = await z.open(location, { kind: "array" });
 
         // Read rows 5-10 (avoids virtual chunk [0,0])
         const data = await z.get(arr, [{ start: 5, stop: 10 }, null]);
@@ -141,54 +149,62 @@ describe('Zarrita Integration', () => {
       });
     });
 
-    describe('groups', () => {
-      it('should open root group', async () => {
-        const store = await IcechunkStore.open(getFixtureUrl('test-repo-v2'));
-        const group = await z.open(store, { kind: 'group' });
+    describe("groups", () => {
+      it("should open root group", async () => {
+        const store = await IcechunkStore.open(getFixtureUrl("test-repo-v2"));
+        const group = await z.open(store, { kind: "group" });
         expect(group).toBeDefined();
       });
 
-      it('should open deeply nested structure on branch', async () => {
-        const store = await IcechunkStore.open(getFixtureUrl('test-repo-v2'), {
-          branch: 'my-branch',
+      it("should open deeply nested structure on branch", async () => {
+        const store = await IcechunkStore.open(getFixtureUrl("test-repo-v2"), {
+          branch: "my-branch",
         });
-        const location = z.root(store).resolve('/group2/group3/group4/group5/inner');
-        const arr = await z.open(location, { kind: 'array' });
+        const location = z
+          .root(store)
+          .resolve("/group2/group3/group4/group5/inner");
+        const arr = await z.open(location, { kind: "array" });
 
         expect(arr.shape).toEqual([10, 10]);
-        expect(arr.dtype).toBe('float32');
+        expect(arr.dtype).toBe("float32");
       });
     });
 
-    describe('time travel', () => {
-      it('should access different structure on different branches', async () => {
+    describe("time travel", () => {
+      it("should access different structure on different branches", async () => {
         // main branch does NOT have group2
-        const storeMain = await IcechunkStore.open(getFixtureUrl('test-repo-v2'), {
-          branch: 'main',
-        });
-        const locationMain = z.root(storeMain).resolve('/group2');
-        await expect(z.open(locationMain, { kind: 'group' })).rejects.toThrow();
+        const storeMain = await IcechunkStore.open(
+          getFixtureUrl("test-repo-v2"),
+          {
+            branch: "main",
+          },
+        );
+        const locationMain = z.root(storeMain).resolve("/group2");
+        await expect(z.open(locationMain, { kind: "group" })).rejects.toThrow();
 
         // my-branch DOES have group2
-        const storeBranch = await IcechunkStore.open(getFixtureUrl('test-repo-v2'), {
-          branch: 'my-branch',
-        });
-        const locationBranch = z.root(storeBranch).resolve('/group2');
-        const group = await z.open(locationBranch, { kind: 'group' });
+        const storeBranch = await IcechunkStore.open(
+          getFixtureUrl("test-repo-v2"),
+          {
+            branch: "my-branch",
+          },
+        );
+        const locationBranch = z.root(storeBranch).resolve("/group2");
+        const group = await z.open(locationBranch, { kind: "group" });
         expect(group).toBeDefined();
       });
 
-      it('should open different snapshots via tags', async () => {
-        const store1 = await IcechunkStore.open(getFixtureUrl('test-repo-v2'), {
-          tag: 'it works!',
+      it("should open different snapshots via tags", async () => {
+        const store1 = await IcechunkStore.open(getFixtureUrl("test-repo-v2"), {
+          tag: "it works!",
         });
-        const store2 = await IcechunkStore.open(getFixtureUrl('test-repo-v2'), {
-          tag: 'it also works!',
+        const store2 = await IcechunkStore.open(getFixtureUrl("test-repo-v2"), {
+          tag: "it also works!",
         });
 
         // Both should open successfully (they point to different snapshots)
-        const group1 = await z.open(store1, { kind: 'group' });
-        const group2 = await z.open(store2, { kind: 'group' });
+        const group1 = await z.open(store1, { kind: "group" });
+        const group2 = await z.open(store2, { kind: "group" });
 
         expect(group1).toBeDefined();
         expect(group2).toBeDefined();
