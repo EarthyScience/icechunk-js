@@ -150,8 +150,7 @@ function parseNodeSnapshot(table: TableReader): NodeSnapshot {
 
 function parseNodeData(parentTable: TableReader, unionType: number): NodeData {
   // Union type 0 = NONE, 1 = Array, 2 = Group
-  if (unionType === 2) {
-    // Group
+  if (unionType === 0 || unionType === 2) {
     return { type: "group" };
   }
 
@@ -165,8 +164,7 @@ function parseNodeData(parentTable: TableReader, unionType: number): NodeData {
     return parseArrayNodeData(arrayTable);
   }
 
-  // Default to group if unknown
-  return { type: "group" };
+  throw new Error(`Unknown node data union type: ${unionType}`);
 }
 
 function parseArrayNodeData(table: TableReader): ArrayNodeData {
