@@ -12,18 +12,17 @@ function createStoreWithMockSession(mockSession: {
 }): IcechunkStore {
   const store = Object.create(IcechunkStore.prototype);
   store.session = mockSession;
-  store.sessionPromise = Promise.resolve(mockSession);
   return store;
 }
 
 describe('IcechunkStore', () => {
-  describe('constructor', () => {
-    it('should accept a Storage and start lazy init', async () => {
+  describe('open', () => {
+    it('should throw on open() when repository is invalid', async () => {
       const storage = new MockStorage({});
-      const store = new IcechunkStore(storage);
 
-      expect(store).toBeInstanceOf(IcechunkStore);
-      await expect(store.get('/zarr.json' as AbsolutePath)).rejects.toThrow();
+      await expect(IcechunkStore.open(storage)).rejects.toThrow(
+        'Not a valid icechunk repository'
+      );
     });
   });
 
@@ -195,12 +194,11 @@ describe('IcechunkStore', () => {
     });
   });
 
-  describe('lazy initialization', () => {
-    it('should throw on get() when repository is invalid', async () => {
+  describe('fail-fast initialization', () => {
+    it('should throw on open() when repository is invalid', async () => {
       const storage = new MockStorage({});
-      const store = new IcechunkStore(storage);
 
-      await expect(store.get('/zarr.json' as AbsolutePath)).rejects.toThrow(
+      await expect(IcechunkStore.open(storage)).rejects.toThrow(
         'Not a valid icechunk repository'
       );
     });

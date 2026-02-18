@@ -15,8 +15,8 @@ npm install @carbonplan/icechunk-js
 import { IcechunkStore } from "@carbonplan/icechunk-js";
 import { open, get } from "zarrita";
 
-// Create a store from a URL
-const store = new IcechunkStore("https://bucket.s3.amazonaws.com/repo");
+// Open a store from a URL
+const store = await IcechunkStore.open("https://bucket.s3.amazonaws.com/repo");
 
 // Open an array and read data
 const array = await open(store, { kind: "array", path: "/temperature" });
@@ -45,7 +45,7 @@ interface.
 ```typescript
 import { IcechunkStore } from "@carbonplan/icechunk-js";
 
-const store = new IcechunkStore("https://example.com/repo", {
+const store = await IcechunkStore.open("https://example.com/repo", {
   branch: "main", // default; or use tag/snapshot
   // tag: 'v1.0',
   // snapshot: 'ABC123...',

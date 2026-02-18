@@ -70,63 +70,60 @@ export interface IcechunkStoreOptions {
  *
  * @example
  * ```typescript
- * import { IcechunkStore } from 'icechunk-js';
+ * import { IcechunkStore } from '@carbonplan/icechunk-js';
  * import { open, get } from 'zarrita';
  *
- * const store = new IcechunkStore('https://bucket.s3.amazonaws.com/repo');
+ * const store = await IcechunkStore.open('https://bucket.s3.amazonaws.com/repo');
  * const array = await open(store, { kind: 'array', path: '/temperature' });
  * const data = await get(array, [0, 0, null]);
  * ```
  */
 export class IcechunkStore implements AsyncReadable {
-  private sessionPromise: Promise<ReadSession>;
-  private session: ReadSession | null = null;
+  private session: ReadSession;
   private transformRequest?: TransformRequest;
 
+  private constructor(session: ReadSession, transformRequest?: TransformRequest) {
+    if (!(session instanceof ReadSession)) {
+      throw new Error(
+        'IcechunkStore constructor is private. Use IcechunkStore.open() instead.'
+      );
+    }
+    this.session = session;
+    this.transformRequest = transformRequest;
+  }
+
   /**
-   * Create an IcechunkStore from a URL.
+   * Open an IcechunkStore from a URL.
    *
    * @param url - URL to the icechunk repository
    * @param options - Store options (branch, tag, or snapshot to checkout)
    */
-  constructor(url: string, options?: IcechunkStoreOptions);
+  static async open(url: string, options?: IcechunkStoreOptions): Promise<IcechunkStore>;
 
   /**
-   * Create an IcechunkStore from an existing ReadSession.
+   * Open an IcechunkStore from an existing ReadSession.
    *
    * @param session - Existing ReadSession
    * @param options - Store options (only transformRequest is used)
    */
-  constructor(session: ReadSession, options?: Pick<IcechunkStoreOptions, 'transformRequest'>);
+  static async open(session: ReadSession, options?: Pick<IcechunkStoreOptions, 'transformRequest'>): Promise<IcechunkStore>;
 
   /**
-   * Create an IcechunkStore from a custom Storage backend.
+   * Open an IcechunkStore from a custom Storage backend.
    *
    * @param storage - Custom Storage implementation
    * @param options - Store options (branch, tag, or snapshot to checkout)
    */
-  constructor(storage: Storage, options?: IcechunkStoreOptions);
+  static async open(storage: Storage, options?: IcechunkStoreOptions): Promise<IcechunkStore>;
 
-  constructor(
+  static async open(
     arg: string | ReadSession | Storage,
     options: IcechunkStoreOptions = {}
-  ) {
-    this.transformRequest = options.transformRequest;
-
+  ): Promise<IcechunkStore> {
     if (arg instanceof ReadSession) {
-      // Already have a session
-      this.session = arg;
-      this.sessionPromise = Promise.resolve(arg);
-    } else {
-      // Need to open repository and checkout
-      this.sessionPromise = this.initSession(arg, options);
+      return new IcechunkStore(arg, options.transformRequest);
     }
-  }
 
-  private async initSession(
-    arg: string | Storage,
-    options: IcechunkStoreOptions
-  ): Promise<ReadSession> {
     const storage = typeof arg === 'string' ? new HttpStorage(arg) : arg;
     const requestOptions = options.signal ? { signal: options.signal } : undefined;
     const repo = await Repository.open({ storage, formatVersion: options.formatVersion }, requestOptions);
@@ -140,13 +137,7 @@ export class IcechunkStore implements AsyncReadable {
       session = await repo.checkoutBranch(options.branch ?? 'main', requestOptions);
     }
 
-    this.session = session;
-    return session;
-  }
-
-  private async getSession(): Promise<ReadSession> {
-    if (this.session) return this.session;
-    return this.sessionPromise;
+    return new IcechunkStore(session, options.transformRequest);
   }
 
   /**
@@ -165,27 +156,22 @@ export class IcechunkStore implements AsyncReadable {
     key: AbsolutePath,
     opts?: { signal?: AbortSignal }
   ): Promise<Uint8Array | undefined> {
-    // Early abort check before any async work
     if (opts?.signal?.aborted) return undefined;
 
-    const session = await this.getSession();
     const parsed = parseZarrKey(key);
 
     try {
       if (parsed.type === 'metadata') {
-        // Metadata is synchronous - no signal needed
-        const data = session.getRawMetadata(parsed.path);
+        const data = this.session.getRawMetadata(parsed.path);
         return data ?? undefined;
       }
 
-      // Chunk key - propagate signal and transformRequest to session
-      const chunk = await session.getChunk(parsed.path, parsed.coords, {
+      const chunk = await this.session.getChunk(parsed.path, parsed.coords, {
         signal: opts?.signal,
         transformRequest: this.transformRequest,
       });
       return chunk ?? undefined;
     } catch {
-      // AbortError and other errors are handled by returning undefined
       return undefined;
     }
   }
@@ -205,8 +191,6 @@ export class IcechunkStore implements AsyncReadable {
   ): Promise<Uint8Array | undefined> {
     if (opts?.signal?.aborted) return undefined;
 
-    // For now, fetch full data and slice
-    // Could optimize later for large chunks
     const data = await this.get(key, opts);
     if (!data) return undefined;
 

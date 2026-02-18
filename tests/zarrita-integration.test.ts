@@ -23,7 +23,7 @@ describe('Zarrita Integration', () => {
   describe('v1 format', () => {
     describe('read array data', () => {
       it('should read array with correct shape, dtype, and values', async () => {
-        const store = new IcechunkStore(getFixtureUrl('test-repo-v1'));
+        const store = await IcechunkStore.open(getFixtureUrl('test-repo-v1'));
         const location = z.root(store).resolve('/group1/small_chunks');
         const arr = await z.open(location, { kind: 'array' });
 
@@ -39,7 +39,7 @@ describe('Zarrita Integration', () => {
       });
 
       it('should read 2D array slice', async () => {
-        const store = new IcechunkStore(getFixtureUrl('test-repo-v1'));
+        const store = await IcechunkStore.open(getFixtureUrl('test-repo-v1'));
         const location = z.root(store).resolve('/group1/big_chunks');
         const arr = await z.open(location, { kind: 'array' });
 
@@ -55,13 +55,13 @@ describe('Zarrita Integration', () => {
 
     describe('groups', () => {
       it('should open root group', async () => {
-        const store = new IcechunkStore(getFixtureUrl('test-repo-v1'));
+        const store = await IcechunkStore.open(getFixtureUrl('test-repo-v1'));
         const group = await z.open(store, { kind: 'group' });
         expect(group).toBeDefined();
       });
 
       it('should open deeply nested structure on branch', async () => {
-        const store = new IcechunkStore(getFixtureUrl('test-repo-v1'), {
+        const store = await IcechunkStore.open(getFixtureUrl('test-repo-v1'), {
           branch: 'my-branch',
         });
         const location = z.root(store).resolve('/group2/group3/group4/group5/inner');
@@ -75,14 +75,14 @@ describe('Zarrita Integration', () => {
     describe('time travel', () => {
       it('should access different structure on different branches', async () => {
         // main branch does NOT have group2
-        const storeMain = new IcechunkStore(getFixtureUrl('test-repo-v1'), {
+        const storeMain = await IcechunkStore.open(getFixtureUrl('test-repo-v1'), {
           branch: 'main',
         });
         const locationMain = z.root(storeMain).resolve('/group2');
         await expect(z.open(locationMain, { kind: 'group' })).rejects.toThrow();
 
         // my-branch DOES have group2
-        const storeBranch = new IcechunkStore(getFixtureUrl('test-repo-v1'), {
+        const storeBranch = await IcechunkStore.open(getFixtureUrl('test-repo-v1'), {
           branch: 'my-branch',
         });
         const locationBranch = z.root(storeBranch).resolve('/group2');
@@ -91,10 +91,10 @@ describe('Zarrita Integration', () => {
       });
 
       it('should open different snapshots via tags', async () => {
-        const store1 = new IcechunkStore(getFixtureUrl('test-repo-v1'), {
+        const store1 = await IcechunkStore.open(getFixtureUrl('test-repo-v1'), {
           tag: 'it works!',
         });
-        const store2 = new IcechunkStore(getFixtureUrl('test-repo-v1'), {
+        const store2 = await IcechunkStore.open(getFixtureUrl('test-repo-v1'), {
           tag: 'it also works!',
         });
 
@@ -111,7 +111,7 @@ describe('Zarrita Integration', () => {
   describe('v2 format', () => {
     describe('read array data', () => {
       it('should read array with correct shape, dtype, and values', async () => {
-        const store = new IcechunkStore(getFixtureUrl('test-repo-v2'));
+        const store = await IcechunkStore.open(getFixtureUrl('test-repo-v2'));
         const location = z.root(store).resolve('/group1/small_chunks');
         const arr = await z.open(location, { kind: 'array' });
 
@@ -127,7 +127,7 @@ describe('Zarrita Integration', () => {
       });
 
       it('should read 2D array slice', async () => {
-        const store = new IcechunkStore(getFixtureUrl('test-repo-v2'));
+        const store = await IcechunkStore.open(getFixtureUrl('test-repo-v2'));
         const location = z.root(store).resolve('/group1/big_chunks');
         const arr = await z.open(location, { kind: 'array' });
 
@@ -143,13 +143,13 @@ describe('Zarrita Integration', () => {
 
     describe('groups', () => {
       it('should open root group', async () => {
-        const store = new IcechunkStore(getFixtureUrl('test-repo-v2'));
+        const store = await IcechunkStore.open(getFixtureUrl('test-repo-v2'));
         const group = await z.open(store, { kind: 'group' });
         expect(group).toBeDefined();
       });
 
       it('should open deeply nested structure on branch', async () => {
-        const store = new IcechunkStore(getFixtureUrl('test-repo-v2'), {
+        const store = await IcechunkStore.open(getFixtureUrl('test-repo-v2'), {
           branch: 'my-branch',
         });
         const location = z.root(store).resolve('/group2/group3/group4/group5/inner');
@@ -163,14 +163,14 @@ describe('Zarrita Integration', () => {
     describe('time travel', () => {
       it('should access different structure on different branches', async () => {
         // main branch does NOT have group2
-        const storeMain = new IcechunkStore(getFixtureUrl('test-repo-v2'), {
+        const storeMain = await IcechunkStore.open(getFixtureUrl('test-repo-v2'), {
           branch: 'main',
         });
         const locationMain = z.root(storeMain).resolve('/group2');
         await expect(z.open(locationMain, { kind: 'group' })).rejects.toThrow();
 
         // my-branch DOES have group2
-        const storeBranch = new IcechunkStore(getFixtureUrl('test-repo-v2'), {
+        const storeBranch = await IcechunkStore.open(getFixtureUrl('test-repo-v2'), {
           branch: 'my-branch',
         });
         const locationBranch = z.root(storeBranch).resolve('/group2');
@@ -179,10 +179,10 @@ describe('Zarrita Integration', () => {
       });
 
       it('should open different snapshots via tags', async () => {
-        const store1 = new IcechunkStore(getFixtureUrl('test-repo-v2'), {
+        const store1 = await IcechunkStore.open(getFixtureUrl('test-repo-v2'), {
           tag: 'it works!',
         });
-        const store2 = new IcechunkStore(getFixtureUrl('test-repo-v2'), {
+        const store2 = await IcechunkStore.open(getFixtureUrl('test-repo-v2'), {
           tag: 'it also works!',
         });
 

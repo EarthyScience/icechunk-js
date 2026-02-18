@@ -6,7 +6,7 @@
  * import { IcechunkStore } from 'icechunk-js';
  * import { open, get } from 'zarrita';
  *
- * const store = new IcechunkStore('https://bucket.s3.amazonaws.com/repo', {
+ * const store = await IcechunkStore.open('https://bucket.s3.amazonaws.com/repo', {
  *   branch: 'main'
  * });
  *
