@@ -53,7 +53,7 @@ const DIMENSION_NAME_NAME = 0;
 // Struct sizes
 const OBJECT_ID_12_SIZE = 12;
 const OBJECT_ID_8_SIZE = 8;
-const MANIFEST_FILE_INFO_SIZE = 24; // 12 + 8 + 4
+const MANIFEST_FILE_INFO_SIZE = 32; // 12 + 4(pad) + 8 + 4 + 4(pad)
 const DIMENSION_SHAPE_SIZE = 16; // 8 + 8
 const CHUNK_INDEX_RANGE_SIZE = 8; // 4 + 4
 
@@ -241,14 +241,16 @@ function parseManifestRef(table: TableReader): ManifestRef {
 function parseManifestFileInfo(bytes: Uint8Array): ManifestFileInfo {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 
-  // ObjectId12 (12 bytes)
+  // ObjectId12 (12 bytes at offset 0)
   const id = asObjectId12(bytes.slice(0, 12));
 
-  // size_bytes (uint64 at offset 12)
-  const sizeBytes = Number(view.getBigUint64(12, true));
+  // 4 bytes padding (offsets 12-15) for uint64 alignment
 
-  // num_chunk_refs (uint32 at offset 20)
-  const numChunkRefs = view.getUint32(20, true);
+  // size_bytes (uint64 at offset 16)
+  const sizeBytes = Number(view.getBigUint64(16, true));
+
+  // num_chunk_refs (uint32 at offset 24)
+  const numChunkRefs = view.getUint32(24, true);
 
   return { id, sizeBytes, numChunkRefs };
 }
