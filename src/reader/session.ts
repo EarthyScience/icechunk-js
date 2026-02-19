@@ -24,6 +24,7 @@ import {
   parseManifest,
   findChunkRef,
   getChunkPayload,
+  deserializeMetadata,
   type Snapshot,
   type Manifest,
   type NodeSnapshot,
@@ -163,6 +164,16 @@ export class ReadSession {
   getFlushedAt(): Date {
     // flushedAt is microseconds since epoch
     return new Date(Number(this.snapshot.flushedAt / 1000n));
+  }
+
+  /**
+   * Get deserialized snapshot metadata.
+   *
+   * Decodes MessagePack (v1) or FlexBuffers (v2) metadata items
+   * into a plain key-value object.
+   */
+  getSnapshotMetadata(): Record<string, unknown> {
+    return deserializeMetadata(this.snapshot.metadata, this.specVersion);
   }
 
   /**

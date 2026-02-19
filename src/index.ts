@@ -17,7 +17,11 @@
 
 // Main store class
 export { IcechunkStore } from "./store.js";
-export type { IcechunkStoreOptions, AsyncReadable, AbsolutePath } from "./store.js";
+export type {
+  IcechunkStoreOptions,
+  AsyncReadable,
+  AbsolutePath,
+} from "./store.js";
 
 // Repository and session
 export { Repository } from "./reader/repository.js";

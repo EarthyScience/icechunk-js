@@ -183,7 +183,6 @@ export class IcechunkStore implements AsyncReadable {
       return undefined;
     }
   }
-
 }
 
 /** Parsed zarr key */
