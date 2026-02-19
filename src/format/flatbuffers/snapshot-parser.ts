@@ -1,10 +1,15 @@
 /**
  * Parser for icechunk Snapshot FlatBuffer format.
  *
- * Field indices based on snapshot.fbs schema order.
+ * Uses flatc-generated TypeScript classes for type-safe field access.
  */
 
-import { parseRootTable, TableReader } from "./reader.js";
+import { ByteBuffer } from "flatbuffers";
+import { Snapshot as FbsSnapshot } from "./generated/snapshot.js";
+import { NodeSnapshot as FbsNodeSnapshot } from "./generated/node-snapshot.js";
+import { ArrayNodeData as FbsArrayNodeData } from "./generated/array-node-data.js";
+import { ManifestRef as FbsManifestRef } from "./generated/manifest-ref.js";
+import { NodeData as FbsNodeDataEnum } from "./generated/node-data.js";
 import {
   asObjectId12,
   asObjectId8,
@@ -19,101 +24,75 @@ import {
   type MetadataItem,
 } from "./types.js";
 
-// Snapshot field indices (from schema order)
-const SNAPSHOT_ID = 0;
-const SNAPSHOT_PARENT_ID = 1;
-const SNAPSHOT_NODES = 2;
-const SNAPSHOT_FLUSHED_AT = 3;
-const SNAPSHOT_MESSAGE = 4;
-const SNAPSHOT_METADATA = 5;
-const SNAPSHOT_MANIFEST_FILES = 6;
+/** Extract bytes from a generated ObjectId12 struct */
+function readId12(bb: ByteBuffer, bbPos: number): Uint8Array {
+  return bb.bytes().slice(bbPos, bbPos + 12);
+}
 
-// NodeSnapshot field indices
-const NODE_ID = 0;
-const NODE_PATH = 1;
-const NODE_USER_DATA = 2;
-const NODE_DATA = 3; // union type + value
-
-// ArrayNodeData field indices
-const ARRAY_SHAPE = 0;
-const ARRAY_DIMENSION_NAMES = 1;
-const ARRAY_MANIFESTS = 2;
-
-// ManifestRef field indices
-const MANIFEST_REF_OBJECT_ID = 0;
-const MANIFEST_REF_EXTENTS = 1;
-
-// MetadataItem field indices
-const METADATA_NAME = 0;
-const METADATA_VALUE = 1;
-
-// DimensionName field indices
-const DIMENSION_NAME_NAME = 0;
-
-// Struct sizes
-const OBJECT_ID_12_SIZE = 12;
-const OBJECT_ID_8_SIZE = 8;
-const MANIFEST_FILE_INFO_SIZE = 32; // 12 + 4(pad) + 8 + 4 + 4(pad)
-const DIMENSION_SHAPE_SIZE = 16; // 8 + 8
-const CHUNK_INDEX_RANGE_SIZE = 8; // 4 + 4
+/** Extract bytes from a generated ObjectId8 struct */
+function readId8(bb: ByteBuffer, bbPos: number): Uint8Array {
+  return bb.bytes().slice(bbPos, bbPos + 8);
+}
 
 /** Parse a Snapshot from FlatBuffer data */
 export function parseSnapshot(data: Uint8Array): Snapshot {
-  const root = parseRootTable(data);
+  const bb = new ByteBuffer(data);
+  const fbsSnapshot = FbsSnapshot.getRootAsSnapshot(bb);
 
   // Parse ID (required)
-  const idBytes = root.readInlineStruct(SNAPSHOT_ID, OBJECT_ID_12_SIZE);
-  if (!idBytes) throw new Error("Snapshot missing required id field");
-  const id = asObjectId12(idBytes);
+  const idObj = fbsSnapshot.id();
+  if (!idObj) throw new Error("Snapshot missing required id field");
+  const id = asObjectId12(readId12(idObj.bb!, idObj.bb_pos));
 
   // Parse parent ID (optional)
-  const parentIdBytes = root.readInlineStruct(
-    SNAPSHOT_PARENT_ID,
-    OBJECT_ID_12_SIZE,
-  );
-  const parentId = parentIdBytes ? asObjectId12(parentIdBytes) : null;
+  const parentIdObj = fbsSnapshot.parentId();
+  const parentId = parentIdObj
+    ? asObjectId12(readId12(parentIdObj.bb!, parentIdObj.bb_pos))
+    : null;
 
   // Parse nodes
-  const nodesLength = root.getVectorLength(SNAPSHOT_NODES);
+  const nodesLength = fbsSnapshot.nodesLength();
   const nodes: NodeSnapshot[] = [];
   for (let i = 0; i < nodesLength; i++) {
-    const nodeTable = root.getVectorTable(SNAPSHOT_NODES, i);
-    if (nodeTable) {
-      nodes.push(parseNodeSnapshot(nodeTable));
+    const fbsNode = fbsSnapshot.nodes(i);
+    if (fbsNode) {
+      nodes.push(parseNodeSnapshot(fbsNode));
     }
   }
 
   // Parse flushed_at
-  const flushedAt = root.readUint64(SNAPSHOT_FLUSHED_AT, 0n);
+  const flushedAt = fbsSnapshot.flushedAt();
 
   // Parse message (required)
-  const message = root.readString(SNAPSHOT_MESSAGE) ?? "";
+  const message = fbsSnapshot.message() ?? "";
 
   // Parse metadata
-  const metadataLength = root.getVectorLength(SNAPSHOT_METADATA);
+  const metadataLength = fbsSnapshot.metadataLength();
   const metadata: MetadataItem[] = [];
   for (let i = 0; i < metadataLength; i++) {
-    const metaTable = root.getVectorTable(SNAPSHOT_METADATA, i);
-    if (metaTable) {
-      const name = metaTable.readString(METADATA_NAME);
-      const value = metaTable.readByteVector(METADATA_VALUE);
+    const fbsMeta = fbsSnapshot.metadata(i);
+    if (fbsMeta) {
+      const name = fbsMeta.name();
+      const value = fbsMeta.valueArray();
       if (name && value) {
-        metadata.push({ name, value });
+        metadata.push({ name, value: new Uint8Array(value) });
       }
     }
   }
 
   // Parse manifest files (vector of structs)
-  const manifestFilesLength = root.getVectorLength(SNAPSHOT_MANIFEST_FILES);
+  const manifestFilesLength = fbsSnapshot.manifestFilesLength();
   const manifestFiles: ManifestFileInfo[] = [];
   for (let i = 0; i < manifestFilesLength; i++) {
-    const structBytes = root.readVectorStruct(
-      SNAPSHOT_MANIFEST_FILES,
-      i,
-      MANIFEST_FILE_INFO_SIZE,
-    );
-    if (structBytes) {
-      manifestFiles.push(parseManifestFileInfo(structBytes));
+    const fbsMfi = fbsSnapshot.manifestFiles(i);
+    if (fbsMfi) {
+      const mfiIdObj = fbsMfi.id();
+      if (!mfiIdObj) throw new Error("ManifestFileInfo missing id");
+      manifestFiles.push({
+        id: asObjectId12(readId12(mfiIdObj.bb!, mfiIdObj.bb_pos)),
+        sizeBytes: Number(fbsMfi.sizeBytes()),
+        numChunkRefs: fbsMfi.numChunkRefs(),
+      });
     }
   }
 
@@ -128,79 +107,80 @@ export function parseSnapshot(data: Uint8Array): Snapshot {
   };
 }
 
-function parseNodeSnapshot(table: TableReader): NodeSnapshot {
+function parseNodeSnapshot(fbsNode: FbsNodeSnapshot): NodeSnapshot {
   // Parse ID (required)
-  const idBytes = table.readInlineStruct(NODE_ID, OBJECT_ID_8_SIZE);
-  if (!idBytes) throw new Error("NodeSnapshot missing required id field");
-  const id = asObjectId8(idBytes);
+  const idObj = fbsNode.id();
+  if (!idObj) throw new Error("NodeSnapshot missing required id field");
+  const id = asObjectId8(readId8(idObj.bb!, idObj.bb_pos));
 
   // Parse path (required)
-  const path = table.readString(NODE_PATH) ?? "";
+  const path = fbsNode.path() ?? "";
 
   // Parse user_data (required)
-  const userData = table.readByteVector(NODE_USER_DATA) ?? new Uint8Array(0);
+  const userData = fbsNode.userDataArray() ?? new Uint8Array(0);
 
   // Parse node_data (union)
-  // Union fields in FlatBuffers: type byte followed by offset to table
-  const nodeDataType = table.readUint8(NODE_DATA, 0);
-  const nodeData = parseNodeData(table, nodeDataType);
+  const nodeDataType = fbsNode.nodeDataType();
+  const nodeData = parseNodeData(fbsNode, nodeDataType);
 
   return { id, path, userData, nodeData };
 }
 
-function parseNodeData(parentTable: TableReader, unionType: number): NodeData {
-  // Union type 0 = NONE, 1 = Array, 2 = Group
-  if (unionType === 0 || unionType === 2) {
+function parseNodeData(
+  fbsNode: FbsNodeSnapshot,
+  unionType: FbsNodeDataEnum,
+): NodeData {
+  if (
+    unionType === FbsNodeDataEnum.NONE ||
+    unionType === FbsNodeDataEnum.Group
+  ) {
     return { type: "group" };
   }
 
-  if (unionType === 1) {
-    // Array - get the nested table
-    // Union value is at field index NODE_DATA + 1
-    const arrayTable = parentTable.getNestedTable(NODE_DATA + 1);
-    if (!arrayTable) {
+  if (unionType === FbsNodeDataEnum.Array) {
+    const arrayData = fbsNode.nodeData(new FbsArrayNodeData());
+    if (!arrayData) {
       throw new Error("ArrayNodeData union type but no table");
     }
-    return parseArrayNodeData(arrayTable);
+    return parseArrayNodeData(arrayData as FbsArrayNodeData);
   }
 
   throw new Error(`Unknown node data union type: ${unionType}`);
 }
 
-function parseArrayNodeData(table: TableReader): ArrayNodeData {
+function parseArrayNodeData(fbsArray: FbsArrayNodeData): ArrayNodeData {
   // Parse shape (vector of DimensionShape structs)
-  const shapeLength = table.getVectorLength(ARRAY_SHAPE);
+  const shapeLength = fbsArray.shapeLength();
   const shape: DimensionShape[] = [];
   for (let i = 0; i < shapeLength; i++) {
-    const structBytes = table.readVectorStruct(
-      ARRAY_SHAPE,
-      i,
-      DIMENSION_SHAPE_SIZE,
-    );
-    if (structBytes) {
-      shape.push(parseDimensionShape(structBytes));
+    const fbsShape = fbsArray.shape(i);
+    if (fbsShape) {
+      shape.push({
+        arrayLength: Number(fbsShape.arrayLength()),
+        chunkLength: Number(fbsShape.chunkLength()),
+      });
     }
   }
 
   // Parse dimension names (vector of tables)
-  const dimNamesLength = table.getVectorLength(ARRAY_DIMENSION_NAMES);
+  const dimNamesLength = fbsArray.dimensionNamesLength();
   const dimensionNames: (string | null)[] = [];
   for (let i = 0; i < dimNamesLength; i++) {
-    const dimNameTable = table.getVectorTable(ARRAY_DIMENSION_NAMES, i);
-    if (dimNameTable) {
-      dimensionNames.push(dimNameTable.readString(DIMENSION_NAME_NAME));
+    const fbsDimName = fbsArray.dimensionNames(i);
+    if (fbsDimName) {
+      dimensionNames.push(fbsDimName.name());
     } else {
       dimensionNames.push(null);
     }
   }
 
   // Parse manifests (vector of tables)
-  const manifestsLength = table.getVectorLength(ARRAY_MANIFESTS);
+  const manifestsLength = fbsArray.manifestsLength();
   const manifests: ManifestRef[] = [];
   for (let i = 0; i < manifestsLength; i++) {
-    const manifestTable = table.getVectorTable(ARRAY_MANIFESTS, i);
-    if (manifestTable) {
-      manifests.push(parseManifestRef(manifestTable));
+    const fbsManifest = fbsArray.manifests(i);
+    if (fbsManifest) {
+      manifests.push(parseManifestRef(fbsManifest));
     }
   }
 
@@ -212,69 +192,21 @@ function parseArrayNodeData(table: TableReader): ArrayNodeData {
   };
 }
 
-function parseManifestRef(table: TableReader): ManifestRef {
+function parseManifestRef(fbsRef: FbsManifestRef): ManifestRef {
   // Object ID (inline struct)
-  const objectIdBytes = table.readInlineStruct(
-    MANIFEST_REF_OBJECT_ID,
-    OBJECT_ID_12_SIZE,
-  );
-  if (!objectIdBytes) throw new Error("ManifestRef missing object_id");
-  const objectId = asObjectId12(objectIdBytes);
+  const objectIdObj = fbsRef.objectId();
+  if (!objectIdObj) throw new Error("ManifestRef missing object_id");
+  const objectId = asObjectId12(readId12(objectIdObj.bb!, objectIdObj.bb_pos));
 
   // Extents (vector of ChunkIndexRange structs)
-  const extentsLength = table.getVectorLength(MANIFEST_REF_EXTENTS);
+  const extentsLength = fbsRef.extentsLength();
   const extents: ChunkIndexRange[] = [];
   for (let i = 0; i < extentsLength; i++) {
-    const structBytes = table.readVectorStruct(
-      MANIFEST_REF_EXTENTS,
-      i,
-      CHUNK_INDEX_RANGE_SIZE,
-    );
-    if (structBytes) {
-      extents.push(parseChunkIndexRange(structBytes));
+    const fbsExtent = fbsRef.extents(i);
+    if (fbsExtent) {
+      extents.push({ from: fbsExtent.from(), to: fbsExtent.to() });
     }
   }
 
   return { objectId, extents };
-}
-
-function parseManifestFileInfo(bytes: Uint8Array): ManifestFileInfo {
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-
-  // ObjectId12 (12 bytes at offset 0)
-  const id = asObjectId12(bytes.slice(0, 12));
-
-  // 4 bytes padding (offsets 12-15) for uint64 alignment
-
-  // size_bytes (uint64 at offset 16)
-  const sizeBytes = Number(view.getBigUint64(16, true));
-
-  // num_chunk_refs (uint32 at offset 24)
-  const numChunkRefs = view.getUint32(24, true);
-
-  return { id, sizeBytes, numChunkRefs };
-}
-
-function parseDimensionShape(bytes: Uint8Array): DimensionShape {
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-
-  // array_length (uint64 at offset 0)
-  const arrayLength = Number(view.getBigUint64(0, true));
-
-  // chunk_length (uint64 at offset 8)
-  const chunkLength = Number(view.getBigUint64(8, true));
-
-  return { arrayLength, chunkLength };
-}
-
-function parseChunkIndexRange(bytes: Uint8Array): ChunkIndexRange {
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-
-  // from (uint32 at offset 0)
-  const from = view.getUint32(0, true);
-
-  // to (uint32 at offset 4)
-  const to = view.getUint32(4, true);
-
-  return { from, to };
 }

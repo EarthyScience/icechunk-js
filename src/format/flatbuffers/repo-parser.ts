@@ -1,10 +1,11 @@
 /**
  * Parser for icechunk Repo FlatBuffer format (v2).
  *
- * Field indices based on repo.fbs schema order.
+ * Uses flatc-generated TypeScript classes for type-safe field access.
  */
 
-import { parseRootTable, TableReader } from "./reader.js";
+import { ByteBuffer } from "flatbuffers";
+import { Repo as FbsRepo } from "./generated/repo.js";
 import { decompress } from "fzstd";
 import {
   parseHeader,
@@ -15,26 +16,11 @@ import {
   HEADER_SIZE,
 } from "../header.js";
 
-// Repo table fields
-const REPO_SPEC_VERSION = 0; // uint8 per schema
-const REPO_TAGS = 1;
-const REPO_BRANCHES = 2;
-// const REPO_DELETED_TAGS = 3;  // Not used for listing - tombstone tracking only
-const REPO_SNAPSHOTS = 4;
-
-// Ref table fields
-const REF_NAME = 0;
-const REF_SNAPSHOT_INDEX = 1;
-
-// SnapshotInfo table fields
-const SNAPSHOT_INFO_ID = 0; // ObjectId12 inline struct (12 bytes)
-
-const OBJECT_ID_12_SIZE = 12;
 const SUPPORTED_SPEC_VERSION = 2;
 
 /** Parsed repo file with cached metadata */
 export interface ParsedRepo {
-  root: TableReader;
+  repo: FbsRepo;
   specVersion: number;
   snapshotsLength: number; // Cached for bounds checking
 }
@@ -63,8 +49,9 @@ export function parseRepo(data: Uint8Array): ParsedRepo {
   }
 
   // Parse FlatBuffer root table
-  const root = parseRootTable(fbData);
-  const specVersion = root.readUint8(REPO_SPEC_VERSION, 0);
+  const bb = new ByteBuffer(fbData);
+  const repo = FbsRepo.getRootAsRepo(bb);
+  const specVersion = repo.specVersion();
 
   if (specVersion !== SUPPORTED_SPEC_VERSION) {
     throw new Error(
@@ -72,9 +59,9 @@ export function parseRepo(data: Uint8Array): ParsedRepo {
     );
   }
 
-  const snapshotsLength = root.getVectorLength(REPO_SNAPSHOTS);
+  const snapshotsLength = repo.snapshotsLength();
 
-  return { root, specVersion, snapshotsLength };
+  return { repo, specVersion, snapshotsLength };
 }
 
 /**
@@ -92,18 +79,18 @@ function compareUtf8ByteOrder(aBytes: Uint8Array, bBytes: Uint8Array): number {
 }
 
 /**
- * Binary search for a ref by name in a sorted vector.
+ * Binary search for a ref by name in tags or branches.
  *
  * @returns Snapshot ID bytes if found, null otherwise
  * @throws Error on corrupted data (null tables, invalid indices)
  */
 function binarySearchRef(
-  repo: ParsedRepo,
-  fieldIndex: number,
+  parsedRepo: ParsedRepo,
+  accessor: (index: number) => ReturnType<FbsRepo["tags"]>,
+  length: number,
   name: string,
 ): Uint8Array | null {
-  const { root, snapshotsLength } = repo;
-  const length = root.getVectorLength(fieldIndex);
+  const { snapshotsLength } = parsedRepo;
   if (length === 0) return null;
 
   // Cache target bytes outside loop
@@ -114,13 +101,13 @@ function binarySearchRef(
 
   while (low <= high) {
     const mid = (low + high) >>> 1;
-    const refTable = root.getVectorTable(fieldIndex, mid);
+    const refTable = accessor(mid);
 
     if (!refTable) {
       throw new Error(`Corrupted repo file: null ref table at index ${mid}`);
     }
 
-    const refName = refTable.readString(REF_NAME);
+    const refName = refTable.name();
     if (refName === null) {
       throw new Error(`Corrupted repo file: null ref name at index ${mid}`);
     }
@@ -134,7 +121,7 @@ function binarySearchRef(
       high = mid - 1;
     } else {
       // Found - validate and return snapshot ID
-      const snapshotIndex = refTable.readUint32(REF_SNAPSHOT_INDEX);
+      const snapshotIndex = refTable.snapshotIndex();
 
       if (snapshotIndex >= snapshotsLength) {
         throw new Error(
@@ -143,7 +130,7 @@ function binarySearchRef(
         );
       }
 
-      return getSnapshotIdByIndex(root, snapshotIndex);
+      return getSnapshotIdByIndex(parsedRepo, snapshotIndex);
     }
   }
 
@@ -155,38 +142,40 @@ function binarySearchRef(
  *
  * @throws Error on corrupted data (null snapshot, missing id)
  */
-function getSnapshotIdByIndex(root: TableReader, index: number): Uint8Array {
-  const snapshotTable = root.getVectorTable(REPO_SNAPSHOTS, index);
-  if (!snapshotTable) {
+function getSnapshotIdByIndex(
+  parsedRepo: ParsedRepo,
+  index: number,
+): Uint8Array {
+  const snapshotInfo = parsedRepo.repo.snapshots(index);
+  if (!snapshotInfo) {
     throw new Error(`Corrupted repo file: null snapshot at index ${index}`);
   }
 
-  const idBytes = snapshotTable.readInlineStruct(
-    SNAPSHOT_INFO_ID,
-    OBJECT_ID_12_SIZE,
-  );
-  if (!idBytes) {
+  const idObj = snapshotInfo.id();
+  if (!idObj) {
     throw new Error(`Corrupted repo file: snapshot ${index} missing id`);
   }
 
-  return idBytes;
+  return idObj.bb!.bytes().slice(idObj.bb_pos, idObj.bb_pos + 12);
 }
 
 /**
- * List all ref names from a vector.
+ * List all ref names from tags or branches.
  *
  * @throws Error on corrupted data (null tables, null names)
  */
-function listRefs(root: TableReader, fieldIndex: number): string[] {
-  const length = root.getVectorLength(fieldIndex);
+function listRefs(
+  accessor: (index: number) => ReturnType<FbsRepo["tags"]>,
+  length: number,
+): string[] {
   const names: string[] = [];
 
   for (let i = 0; i < length; i++) {
-    const refTable = root.getVectorTable(fieldIndex, i);
+    const refTable = accessor(i);
     if (!refTable) {
       throw new Error(`Corrupted repo file: null ref table at index ${i}`);
     }
-    const name = refTable.readString(REF_NAME);
+    const name = refTable.name();
     if (name === null) {
       throw new Error(`Corrupted repo file: null ref name at index ${i}`);
     }
@@ -202,10 +191,16 @@ function listRefs(root: TableReader, fieldIndex: number): string[] {
  * @returns Snapshot ID bytes if found, null otherwise
  */
 export function resolveBranch(
-  repo: ParsedRepo,
+  parsedRepo: ParsedRepo,
   name: string,
 ): Uint8Array | null {
-  return binarySearchRef(repo, REPO_BRANCHES, name);
+  const { repo } = parsedRepo;
+  return binarySearchRef(
+    parsedRepo,
+    (i) => repo.branches(i),
+    repo.branchesLength(),
+    name,
+  );
 }
 
 /**
@@ -213,8 +208,17 @@ export function resolveBranch(
  *
  * @returns Snapshot ID bytes if found, null otherwise
  */
-export function resolveTag(repo: ParsedRepo, name: string): Uint8Array | null {
-  return binarySearchRef(repo, REPO_TAGS, name);
+export function resolveTag(
+  parsedRepo: ParsedRepo,
+  name: string,
+): Uint8Array | null {
+  const { repo } = parsedRepo;
+  return binarySearchRef(
+    parsedRepo,
+    (i) => repo.tags(i),
+    repo.tagsLength(),
+    name,
+  );
 }
 
 /**
@@ -222,8 +226,9 @@ export function resolveTag(repo: ParsedRepo, name: string): Uint8Array | null {
  *
  * @returns Array of branch names (in storage order, which is sorted)
  */
-export function listBranchesFromRepo(repo: ParsedRepo): string[] {
-  return listRefs(repo.root, REPO_BRANCHES);
+export function listBranchesFromRepo(parsedRepo: ParsedRepo): string[] {
+  const { repo } = parsedRepo;
+  return listRefs((i) => repo.branches(i), repo.branchesLength());
 }
 
 /**
@@ -233,6 +238,7 @@ export function listBranchesFromRepo(repo: ParsedRepo): string[] {
  *
  * @returns Array of tag names (in storage order, which is sorted)
  */
-export function listTagsFromRepo(repo: ParsedRepo): string[] {
-  return listRefs(repo.root, REPO_TAGS);
+export function listTagsFromRepo(parsedRepo: ParsedRepo): string[] {
+  const { repo } = parsedRepo;
+  return listRefs((i) => repo.tags(i), repo.tagsLength());
 }

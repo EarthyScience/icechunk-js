@@ -1,10 +1,13 @@
 /**
  * Parser for icechunk Manifest FlatBuffer format.
  *
- * Field indices based on manifest.fbs schema order.
+ * Uses flatc-generated TypeScript classes for type-safe field access.
  */
 
-import { parseRootTable, TableReader } from "./reader.js";
+import { ByteBuffer } from "flatbuffers";
+import { Manifest as FbsManifest } from "./generated/manifest.js";
+import { ArrayManifest as FbsArrayManifest } from "./generated/array-manifest.js";
+import { ChunkRef as FbsChunkRef } from "./generated/chunk-ref.js";
 import {
   asObjectId12,
   asObjectId8,
@@ -15,100 +18,83 @@ import {
   type ObjectId8,
 } from "./types.js";
 
-// Manifest field indices
-const MANIFEST_ID = 0;
-const MANIFEST_ARRAYS = 1;
-
-// ArrayManifest field indices
-const ARRAY_MANIFEST_NODE_ID = 0;
-const ARRAY_MANIFEST_REFS = 1;
-
-// ChunkRef field indices
-const CHUNK_REF_INDEX = 0;
-const CHUNK_REF_INLINE = 1;
-const CHUNK_REF_OFFSET = 2;
-const CHUNK_REF_LENGTH = 3;
-const CHUNK_REF_CHUNK_ID = 4;
-const CHUNK_REF_LOCATION = 5;
-const CHUNK_REF_CHECKSUM_ETAG = 6;
-const CHUNK_REF_CHECKSUM_LAST_MODIFIED = 7;
-
-// Struct sizes
-const OBJECT_ID_12_SIZE = 12;
-const OBJECT_ID_8_SIZE = 8;
-
 /** Parse a Manifest from FlatBuffer data */
 export function parseManifest(data: Uint8Array): Manifest {
-  const root = parseRootTable(data);
+  const bb = new ByteBuffer(data);
+  const fbsManifest = FbsManifest.getRootAsManifest(bb);
 
   // Parse ID (required)
-  const idBytes = root.readInlineStruct(MANIFEST_ID, OBJECT_ID_12_SIZE);
-  if (!idBytes) throw new Error("Manifest missing required id field");
-  const id = asObjectId12(idBytes);
+  const idObj = fbsManifest.id();
+  if (!idObj) throw new Error("Manifest missing required id field");
+  const id = asObjectId12(
+    idObj.bb!.bytes().slice(idObj.bb_pos, idObj.bb_pos + 12),
+  );
 
   // Parse arrays
-  const arraysLength = root.getVectorLength(MANIFEST_ARRAYS);
+  const arraysLength = fbsManifest.arraysLength();
   const arrays: ArrayManifest[] = [];
   for (let i = 0; i < arraysLength; i++) {
-    const arrayTable = root.getVectorTable(MANIFEST_ARRAYS, i);
-    if (arrayTable) {
-      arrays.push(parseArrayManifest(arrayTable));
+    const fbsArray = fbsManifest.arrays(i);
+    if (fbsArray) {
+      arrays.push(parseArrayManifest(fbsArray));
     }
   }
 
   return { id, arrays };
 }
 
-function parseArrayManifest(table: TableReader): ArrayManifest {
+function parseArrayManifest(fbsArray: FbsArrayManifest): ArrayManifest {
   // Parse node_id (required)
-  const nodeIdBytes = table.readInlineStruct(
-    ARRAY_MANIFEST_NODE_ID,
-    OBJECT_ID_8_SIZE,
-  );
-  if (!nodeIdBytes)
+  const nodeIdObj = fbsArray.nodeId();
+  if (!nodeIdObj)
     throw new Error("ArrayManifest missing required node_id field");
-  const nodeId = asObjectId8(nodeIdBytes);
+  const nodeId = asObjectId8(
+    nodeIdObj.bb!.bytes().slice(nodeIdObj.bb_pos, nodeIdObj.bb_pos + 8),
+  );
 
   // Parse refs
-  const refsLength = table.getVectorLength(ARRAY_MANIFEST_REFS);
+  const refsLength = fbsArray.refsLength();
   const refs: ChunkRef[] = [];
   for (let i = 0; i < refsLength; i++) {
-    const refTable = table.getVectorTable(ARRAY_MANIFEST_REFS, i);
-    if (refTable) {
-      refs.push(parseChunkRef(refTable));
+    const fbsRef = fbsArray.refs(i);
+    if (fbsRef) {
+      refs.push(parseChunkRef(fbsRef));
     }
   }
 
   return { nodeId, refs };
 }
 
-function parseChunkRef(table: TableReader): ChunkRef {
+function parseChunkRef(fbsRef: FbsChunkRef): ChunkRef {
   // Parse index (required, vector of uint32)
-  const index = table.readUint32Vector(CHUNK_REF_INDEX) ?? [];
+  const indexLength = fbsRef.indexLength();
+  const index: number[] = [];
+  for (let i = 0; i < indexLength; i++) {
+    index.push(fbsRef.index(i)!);
+  }
 
   // Parse inline (optional byte vector)
-  const inline = table.readByteVector(CHUNK_REF_INLINE);
+  const inlineData = fbsRef.inlineArray();
+  const inline = inlineData ? new Uint8Array(inlineData) : null;
 
   // Parse offset and length
-  const offset = Number(table.readUint64(CHUNK_REF_OFFSET, 0n));
-  const length = Number(table.readUint64(CHUNK_REF_LENGTH, 0n));
+  const offset = Number(fbsRef.offset());
+  const length = Number(fbsRef.length());
 
   // Parse chunk_id (optional inline struct)
-  const chunkIdBytes = table.readInlineStruct(
-    CHUNK_REF_CHUNK_ID,
-    OBJECT_ID_12_SIZE,
-  );
-  const chunkId = chunkIdBytes ? asObjectId12(chunkIdBytes) : null;
+  const chunkIdObj = fbsRef.chunkId();
+  const chunkId = chunkIdObj
+    ? asObjectId12(
+        chunkIdObj.bb!.bytes().slice(chunkIdObj.bb_pos, chunkIdObj.bb_pos + 12),
+      )
+    : null;
 
   // Parse location (optional string)
-  const location = table.readString(CHUNK_REF_LOCATION);
+  const location = fbsRef.location();
 
   // Parse checksum fields
-  const checksumEtag = table.readString(CHUNK_REF_CHECKSUM_ETAG);
-  const checksumLastModified = table.readUint32(
-    CHUNK_REF_CHECKSUM_LAST_MODIFIED,
-    0,
-  );
+  const checksumEtag = fbsRef.checksumEtag();
+  const checksumLastModified = fbsRef.checksumLastModified();
 
   return {
     index,
