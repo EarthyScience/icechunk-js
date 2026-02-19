@@ -23,3 +23,7 @@ coverage/
 
 # TypeScript cache
 *.tsbuildinfo
+
+# flatc barrel files (generated but unused)
+src/format/flatbuffers/all.ts
+src/format/flatbuffers/generated.ts
