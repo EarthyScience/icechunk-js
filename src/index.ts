@@ -21,6 +21,7 @@ export type {
   IcechunkStoreOptions,
   AsyncReadable,
   AbsolutePath,
+  RangeQuery,
 } from "./store.js";
 
 // Repository and session

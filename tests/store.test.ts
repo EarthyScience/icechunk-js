@@ -9,6 +9,7 @@ import { MockStorage } from "./fixtures/mock-storage.js";
 function createStoreWithMockSession(mockSession: {
   getRawMetadata: ReturnType<typeof vi.fn>;
   getChunk: ReturnType<typeof vi.fn>;
+  getChunkRange?: ReturnType<typeof vi.fn>;
 }): IcechunkStore {
   const store = Object.create(IcechunkStore.prototype);
   store.session = mockSession;
@@ -163,6 +164,124 @@ describe("IcechunkStore", () => {
         expect(Number.isNaN(call[1][1])).toBe(true);
         expect(call[1][2]).toBe(2);
       });
+    });
+  });
+
+  describe("getRange", () => {
+    it("should use getChunkRange for chunk keys", async () => {
+      const getChunkSpy = vi.fn();
+      const getChunkRangeSpy = vi.fn().mockResolvedValue(new Uint8Array([7, 8]));
+
+      const store = createStoreWithMockSession({
+        getRawMetadata: vi.fn(),
+        getChunk: getChunkSpy,
+        getChunkRange: getChunkRangeSpy,
+      });
+
+      const result = await store.getRange("/array/c/1/2" as AbsolutePath, {
+        offset: 10,
+        length: 5,
+      });
+
+      expect(getChunkRangeSpy).toHaveBeenCalledWith(
+        "/array",
+        [1, 2],
+        { offset: 10, length: 5 },
+        { signal: undefined },
+      );
+      expect(getChunkSpy).not.toHaveBeenCalled();
+      expect(result).toEqual(new Uint8Array([7, 8]));
+    });
+
+    it("should use getChunkRange with suffixLength for shard index reads", async () => {
+      const getChunkRangeSpy = vi.fn().mockResolvedValue(new Uint8Array([1, 2, 3, 4]));
+
+      const store = createStoreWithMockSession({
+        getRawMetadata: vi.fn(),
+        getChunk: vi.fn(),
+        getChunkRange: getChunkRangeSpy,
+      });
+
+      const result = await store.getRange("/array/c/0/0" as AbsolutePath, {
+        suffixLength: 20,
+      });
+
+      expect(getChunkRangeSpy).toHaveBeenCalledWith(
+        "/array",
+        [0, 0],
+        { suffixLength: 20 },
+        { signal: undefined },
+      );
+      expect(result).toEqual(new Uint8Array([1, 2, 3, 4]));
+    });
+
+    it("should return sliced data for offset/length range", async () => {
+      const getRawMetadataSpy = vi
+        .fn()
+        .mockReturnValue(new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]));
+
+      const store = createStoreWithMockSession({
+        getRawMetadata: getRawMetadataSpy,
+        getChunk: vi.fn(),
+      });
+
+      const result = await store.getRange("/zarr.json" as AbsolutePath, {
+        offset: 2,
+        length: 4,
+      });
+
+      expect(result).toEqual(new Uint8Array([2, 3, 4, 5]));
+    });
+
+    it("should return sliced data for suffixLength range", async () => {
+      const getRawMetadataSpy = vi
+        .fn()
+        .mockReturnValue(new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]));
+
+      const store = createStoreWithMockSession({
+        getRawMetadata: getRawMetadataSpy,
+        getChunk: vi.fn(),
+      });
+
+      const result = await store.getRange("/zarr.json" as AbsolutePath, {
+        suffixLength: 3,
+      });
+
+      expect(result).toEqual(new Uint8Array([7, 8, 9]));
+    });
+
+    it("should return undefined when underlying get returns undefined", async () => {
+      const store = createStoreWithMockSession({
+        getRawMetadata: vi.fn().mockReturnValue(null),
+        getChunk: vi.fn(),
+      });
+
+      const result = await store.getRange("/missing/zarr.json" as AbsolutePath, {
+        offset: 0,
+        length: 5,
+      });
+
+      expect(result).toBeUndefined();
+    });
+
+    it("should return undefined when signal is already aborted", async () => {
+      const store = createStoreWithMockSession({
+        getRawMetadata: vi
+          .fn()
+          .mockReturnValue(new Uint8Array([1, 2, 3, 4, 5])),
+        getChunk: vi.fn(),
+      });
+
+      const controller = new AbortController();
+      controller.abort();
+
+      const result = await store.getRange(
+        "/zarr.json" as AbsolutePath,
+        { offset: 0, length: 3 },
+        { signal: controller.signal },
+      );
+
+      expect(result).toBeUndefined();
     });
   });
 

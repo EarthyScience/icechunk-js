@@ -294,6 +294,55 @@ export class ReadSession {
     return null;
   }
 
+  /**
+   * Read a byte range of chunk data for an array.
+   *
+   * Like getChunk, but fetches only the requested byte range from storage
+   * instead of the full chunk. Used by IcechunkStore.getRange to support
+   * zarrita's sharded array reads efficiently.
+   *
+   * @param path - Path to the array
+   * @param coords - Chunk coordinates (N-dimensional)
+   * @param range - Byte range within the chunk data
+   * @param options - Optional request options (signal for cancellation)
+   * @returns Chunk data bytes or null if not found
+   */
+  async getChunkRange(
+    path: string,
+    coords: number[],
+    range: { offset: number; length: number } | { suffixLength: number },
+    options?: RequestOptions,
+  ): Promise<Uint8Array | null> {
+    if (options?.signal?.aborted) return null;
+
+    const node = this.getNode(path);
+    if (!node || node.nodeData.type !== "array") {
+      return null;
+    }
+
+    const arrayData = node.nodeData;
+
+    try {
+      for (const manifestRef of arrayData.manifests) {
+        if (!this.coordsInExtents(coords, manifestRef.extents)) {
+          continue;
+        }
+
+        const manifest = await this.loadManifest(manifestRef.objectId, options);
+        const chunkRef = findChunkRef(manifest, node.id, coords);
+        if (!chunkRef) continue;
+
+        const payload = getChunkPayload(chunkRef);
+        return this.fetchChunkPayloadRange(payload, range, options);
+      }
+    } catch (error) {
+      if (error instanceof AbortError) return null;
+      throw error;
+    }
+
+    return null;
+  }
+
   /** Check if coordinates fall within extent ranges */
   private coordsInExtents(
     coords: number[],
@@ -326,7 +375,18 @@ export class ReadSession {
           start: payload.offset,
           end: payload.offset + payload.length,
         };
-        return this.storage.getObject(path, range, options);
+        const data = await this.storage.getObject(path, range, options);
+        if (data.length === payload.length) return data;
+
+        // Range header may be ignored (e.g. HTTP 200 full body). If the full object
+        // is available, slice out the requested window explicitly.
+        if (data.length >= range.end) {
+          return data.slice(range.start, range.end);
+        }
+
+        throw new Error(
+          `Storage returned ${data.length} bytes for ${path} range ${range.start}-${range.end - 1}; expected ${payload.length} bytes`,
+        );
       }
 
       case "virtual": {
@@ -368,13 +428,142 @@ export class ReadSession {
           throw error;
         }
 
-        if (!response.ok && response.status !== 206) {
+        if (response.status !== 200 && response.status !== 206) {
           throw new Error(
             `Failed to fetch virtual chunk from ${httpUrl}: ${response.status} ${response.statusText}`,
           );
         }
 
-        return new Uint8Array(await response.arrayBuffer());
+        const data = new Uint8Array(await response.arrayBuffer());
+        if (response.status === 206) {
+          if (data.length !== payload.length) {
+            throw new Error(
+              `Virtual range response size mismatch for ${httpUrl}: expected ${payload.length} bytes, got ${data.length}`,
+            );
+          }
+          return data;
+        }
+
+        const absoluteEnd = payload.offset + payload.length;
+        // 200 means the Range request was ignored; only accept it if we can prove
+        // we received enough bytes to slice the requested absolute window.
+        if (data.length >= absoluteEnd) {
+          return data.slice(payload.offset, absoluteEnd);
+        }
+
+        throw new Error(
+          `Virtual range request not honored for ${httpUrl}: need at least ${absoluteEnd} bytes for fallback slicing, got ${data.length}`,
+        );
+      }
+    }
+  }
+
+  /** Fetch a byte range of chunk data based on payload type */
+  private async fetchChunkPayloadRange(
+    payload: ChunkPayload,
+    range: { offset: number; length: number } | { suffixLength: number },
+    options?: RequestOptions,
+  ): Promise<Uint8Array> {
+    // Compute absolute start/end within the chunk's data
+    let rangeStart: number;
+    let rangeEnd: number;
+
+    if ("suffixLength" in range) {
+      rangeStart = payload.type === "inline"
+        ? payload.data.length - range.suffixLength
+        : payload.length - range.suffixLength;
+      rangeEnd = payload.type === "inline" ? payload.data.length : payload.length;
+    } else {
+      rangeStart = range.offset;
+      rangeEnd = range.offset + range.length;
+    }
+
+    switch (payload.type) {
+      case "inline":
+        return payload.data.slice(rangeStart, rangeEnd);
+
+      case "native": {
+        const path = getChunkPath(encodeObjectId12(payload.chunkId));
+        const storageRange: ByteRange = {
+          start: payload.offset + rangeStart,
+          end: payload.offset + rangeEnd,
+        };
+        const expectedSize = rangeEnd - rangeStart;
+        const data = await this.storage.getObject(path, storageRange, options);
+        if (data.length === expectedSize) return data;
+
+        // Range header may be ignored (e.g. HTTP 200 full body). If the full object
+        // is available, slice out the requested window explicitly.
+        if (data.length >= storageRange.end) {
+          return data.slice(storageRange.start, storageRange.end);
+        }
+
+        throw new Error(
+          `Storage returned ${data.length} bytes for ${path} range ${storageRange.start}-${storageRange.end - 1}; expected ${expectedSize} bytes`,
+        );
+      }
+
+      case "virtual": {
+        const absoluteStart = payload.offset + rangeStart;
+        const absoluteEnd = payload.offset + rangeEnd;
+
+        let httpUrl = translateToHttpUrl(payload.location);
+        let fetchInit: RequestInit = {
+          headers: {
+            Range: `bytes=${absoluteStart}-${absoluteEnd - 1}`,
+          },
+          signal: options?.signal,
+        };
+
+        if (options?.transformRequest) {
+          const result = await options.transformRequest(httpUrl, {
+            method: "GET",
+          });
+          httpUrl = result.url;
+          if (result.headers) {
+            fetchInit.headers = { ...fetchInit.headers, ...result.headers };
+          }
+          const { url: _, headers: __, method: ___, ...rest } = result;
+          fetchInit = { ...fetchInit, ...rest };
+        }
+
+        let response: Response;
+        try {
+          response = await fetch(httpUrl, fetchInit);
+        } catch (error) {
+          if (error instanceof Error && error.name === "AbortError") {
+            throw new AbortError();
+          }
+          throw error;
+        }
+
+        if (response.status !== 200 && response.status !== 206) {
+          throw new Error(
+            `Failed to fetch virtual chunk from ${httpUrl}: ${response.status} ${response.statusText}`,
+          );
+        }
+
+        const expectedSize = rangeEnd - rangeStart;
+        const data = new Uint8Array(await response.arrayBuffer());
+
+        if (response.status === 206) {
+          if (data.length !== expectedSize) {
+            throw new Error(
+              `Virtual range response size mismatch for ${httpUrl}: expected ${expectedSize} bytes, got ${data.length}`,
+            );
+          }
+          return data;
+        }
+
+        // 200 means the Range request was ignored; only accept it if we can prove
+        // we received enough bytes to slice the requested absolute window.
+        if (data.length >= absoluteEnd) {
+          return data.slice(absoluteStart, absoluteEnd);
+        }
+
+        throw new Error(
+          `Virtual range request not honored for ${httpUrl}: need at least ${absoluteEnd} bytes for fallback slicing, got ${data.length}`,
+        );
       }
     }
   }

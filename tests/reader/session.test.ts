@@ -419,7 +419,7 @@ describe("ReadSession", () => {
     });
 
     it("should call transformRequest with correct URL and options", async () => {
-      const mockData = new Uint8Array([1, 2, 3]);
+      const mockData = new Uint8Array(10);
       const mockResponse = {
         ok: true,
         status: 206,
@@ -455,7 +455,7 @@ describe("ReadSession", () => {
     });
 
     it("should merge headers from transformRequest", async () => {
-      const mockData = new Uint8Array([1, 2, 3]);
+      const mockData = new Uint8Array(20);
       const mockResponse = {
         ok: true,
         status: 206,
@@ -499,7 +499,7 @@ describe("ReadSession", () => {
     });
 
     it("should use transformed URL from transformRequest", async () => {
-      const mockData = new Uint8Array([1, 2, 3]);
+      const mockData = new Uint8Array(10);
       const mockResponse = {
         ok: true,
         status: 206,
@@ -542,7 +542,7 @@ describe("ReadSession", () => {
     });
 
     it("should work with async transformRequest", async () => {
-      const mockData = new Uint8Array([1, 2, 3]);
+      const mockData = new Uint8Array(10);
       const mockResponse = {
         ok: true,
         status: 206,
@@ -585,7 +585,7 @@ describe("ReadSession", () => {
     });
 
     it("should ignore method override from transformRequest (HEAD would corrupt data)", async () => {
-      const mockData = new Uint8Array([1, 2, 3]);
+      const mockData = new Uint8Array(10);
       const mockResponse = {
         ok: true,
         status: 206,
@@ -625,7 +625,7 @@ describe("ReadSession", () => {
     });
 
     it("should merge other RequestInit options from transformRequest", async () => {
-      const mockData = new Uint8Array([1, 2, 3]);
+      const mockData = new Uint8Array(10);
       const mockResponse = {
         ok: true,
         status: 206,
@@ -731,6 +731,242 @@ describe("ReadSession", () => {
 
       const result = await session.fetchChunkPayload(payload);
       expect(result).toBe(inlineData);
+    });
+
+    it("should slice native full-object fallback when Range is ignored", async () => {
+      const fullObject = new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+      const storage = new MockStorage({});
+      const getObjectSpy = vi
+        .spyOn(storage, "getObject")
+        .mockResolvedValue(fullObject);
+      const session = createMockSession({ nodes: [], storage }) as any;
+
+      const payload = {
+        type: "native" as const,
+        chunkId: createMockSnapshotId(321) as any,
+        offset: 3,
+        length: 4,
+      };
+
+      const result = await session.fetchChunkPayload(payload);
+
+      expect(getObjectSpy).toHaveBeenCalledWith(
+        expect.any(String),
+        { start: 3, end: 7 },
+        undefined,
+      );
+      expect(result).toEqual(new Uint8Array([3, 4, 5, 6]));
+    });
+
+    it("should throw when native response is too small for fallback slicing", async () => {
+      const storage = new MockStorage({});
+      const getObjectSpy = vi
+        .spyOn(storage, "getObject")
+        .mockResolvedValue(new Uint8Array([1, 2]));
+      const session = createMockSession({ nodes: [], storage }) as any;
+
+      const payload = {
+        type: "native" as const,
+        chunkId: createMockSnapshotId(322) as any,
+        offset: 3,
+        length: 4,
+      };
+
+      await expect(session.fetchChunkPayload(payload)).rejects.toThrow(
+        "Storage returned 2 bytes",
+      );
+
+      expect(getObjectSpy).toHaveBeenCalledWith(
+        expect.any(String),
+        { start: 3, end: 7 },
+        undefined,
+      );
+    });
+
+    it("should slice virtual full-object fallback when server returns 200", async () => {
+      const fullObject = new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+      const mockResponse = {
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        arrayBuffer: vi.fn().mockResolvedValue(fullObject.buffer),
+      };
+      const fetchSpy = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValue(mockResponse as any);
+      const session = createMockSession({ nodes: [] }) as any;
+
+      const payload = {
+        type: "virtual" as const,
+        location: "https://example.com/data.bin",
+        offset: 3,
+        length: 4,
+        checksumEtag: null,
+        checksumLastModified: 0,
+      };
+
+      const result = await session.fetchChunkPayload(payload);
+
+      expect(fetchSpy).toHaveBeenCalledWith("https://example.com/data.bin", {
+        headers: { Range: "bytes=3-6" },
+        signal: undefined,
+      });
+      expect(result).toEqual(new Uint8Array([3, 4, 5, 6]));
+
+      fetchSpy.mockRestore();
+    });
+
+    it("should reject virtual 200 responses without full-body fallback coverage", async () => {
+      const mockResponse = {
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        arrayBuffer: vi.fn().mockResolvedValue(new Uint8Array([9, 8, 7, 6]).buffer),
+      };
+      const fetchSpy = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValue(mockResponse as any);
+      const session = createMockSession({ nodes: [] }) as any;
+
+      const payload = {
+        type: "virtual" as const,
+        location: "https://example.com/data.bin",
+        offset: 10,
+        length: 4,
+        checksumEtag: null,
+        checksumLastModified: 0,
+      };
+
+      await expect(session.fetchChunkPayload(payload)).rejects.toThrow(
+        "Virtual range request not honored",
+      );
+
+      fetchSpy.mockRestore();
+    });
+  });
+
+  describe("fetchChunkPayloadRange", () => {
+    it("should slice native full-object fallback when Range is ignored", async () => {
+      const fullObject = new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+      const storage = new MockStorage({});
+      const getObjectSpy = vi
+        .spyOn(storage, "getObject")
+        .mockResolvedValue(fullObject);
+      const session = createMockSession({ nodes: [], storage }) as any;
+
+      const payload = {
+        type: "native" as const,
+        chunkId: createMockSnapshotId(123) as any,
+        offset: 3,
+        length: 6,
+      };
+
+      const result = await session.fetchChunkPayloadRange(payload, {
+        offset: 1,
+        length: 3,
+      });
+
+      expect(getObjectSpy).toHaveBeenCalledWith(
+        expect.any(String),
+        { start: 4, end: 7 },
+        undefined,
+      );
+      expect(result).toEqual(new Uint8Array([4, 5, 6]));
+    });
+
+    it("should throw when native range response is too small for fallback slicing", async () => {
+      const storage = new MockStorage({});
+      const getObjectSpy = vi
+        .spyOn(storage, "getObject")
+        .mockResolvedValue(new Uint8Array([1, 2]));
+      const session = createMockSession({ nodes: [], storage }) as any;
+
+      const payload = {
+        type: "native" as const,
+        chunkId: createMockSnapshotId(124) as any,
+        offset: 3,
+        length: 6,
+      };
+
+      await expect(
+        session.fetchChunkPayloadRange(payload, {
+          offset: 1,
+          length: 3,
+        }),
+      ).rejects.toThrow("Storage returned 2 bytes");
+
+      expect(getObjectSpy).toHaveBeenCalledWith(
+        expect.any(String),
+        { start: 4, end: 7 },
+        undefined,
+      );
+    });
+
+    it("should slice virtual full-object fallback when server returns 200", async () => {
+      const fullObject = new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+      const mockResponse = {
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        arrayBuffer: vi.fn().mockResolvedValue(fullObject.buffer),
+      };
+      const fetchSpy = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValue(mockResponse as any);
+      const session = createMockSession({ nodes: [] }) as any;
+
+      const payload = {
+        type: "virtual" as const,
+        location: "https://example.com/data.bin",
+        offset: 2,
+        length: 8,
+        checksumEtag: null,
+        checksumLastModified: 0,
+      };
+
+      const result = await session.fetchChunkPayloadRange(payload, {
+        offset: 3,
+        length: 2,
+      });
+
+      expect(fetchSpy).toHaveBeenCalledWith("https://example.com/data.bin", {
+        headers: { Range: "bytes=5-6" },
+        signal: undefined,
+      });
+      expect(result).toEqual(new Uint8Array([5, 6]));
+
+      fetchSpy.mockRestore();
+    });
+
+    it("should reject virtual 200 responses without full-body fallback coverage", async () => {
+      const mockResponse = {
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        arrayBuffer: vi.fn().mockResolvedValue(new Uint8Array([9, 8, 7, 6]).buffer),
+      };
+      const fetchSpy = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValue(mockResponse as any);
+      const session = createMockSession({ nodes: [] }) as any;
+
+      const payload = {
+        type: "virtual" as const,
+        location: "https://example.com/data.bin",
+        offset: 10,
+        length: 20,
+        checksumEtag: null,
+        checksumLastModified: 0,
+      };
+
+      await expect(
+        session.fetchChunkPayloadRange(payload, {
+          offset: 5,
+          length: 4,
+        }),
+      ).rejects.toThrow("Virtual range request not honored");
+
+      fetchSpy.mockRestore();
     });
   });
 

@@ -16,10 +16,22 @@ import type { Storage, TransformRequest } from "./storage/storage.js";
 export type AbsolutePath<Rest extends string = string> = `/${Rest}`;
 
 /**
+ * zarrita's RangeQuery type for partial reads
+ */
+export type RangeQuery =
+  | { offset: number; length: number }
+  | { suffixLength: number };
+
+/**
  * zarrita's AsyncReadable interface
  */
 export interface AsyncReadable<Options = unknown> {
   get(key: AbsolutePath, opts?: Options): Promise<Uint8Array | undefined>;
+  getRange?(
+    key: AbsolutePath,
+    range: RangeQuery,
+    opts?: Options,
+  ): Promise<Uint8Array | undefined>;
 }
 
 /** Options for IcechunkStore */
@@ -179,6 +191,55 @@ export class IcechunkStore implements AsyncReadable {
         transformRequest: this.transformRequest,
       });
       return chunk ?? undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Get partial data for a zarr key.
+   *
+   * Required by zarrita for sharded arrays. zarrita uses this to read the
+   * shard index (via suffixLength) and extract individual inner chunks
+   * (via offset/length) from shard data.
+   *
+   * @param key - Absolute path
+   * @param range - Byte range to fetch
+   * @param opts - Optional request options (supports AbortSignal for cancellation)
+   * @returns Data bytes or undefined if not found
+   */
+  async getRange(
+    key: AbsolutePath,
+    range: RangeQuery,
+    opts?: { signal?: AbortSignal },
+  ): Promise<Uint8Array | undefined> {
+    if (opts?.signal?.aborted) return undefined;
+
+    const parsed = parseZarrKey(key);
+
+    try {
+      if (parsed.type === "chunk") {
+        // Use targeted byte-range read through the session
+        const data = await this.session.getChunkRange(
+          parsed.path,
+          parsed.coords,
+          range,
+          {
+            signal: opts?.signal,
+            transformRequest: this.transformRequest,
+          },
+        );
+        return data ?? undefined;
+      }
+
+      // For metadata keys, fetch full data and slice
+      const data = this.session.getRawMetadata(parsed.path);
+      if (!data) return undefined;
+
+      if ("suffixLength" in range) {
+        return data.slice(-range.suffixLength);
+      }
+      return data.slice(range.offset, range.offset + range.length);
     } catch {
       return undefined;
     }
