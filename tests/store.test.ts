@@ -170,7 +170,9 @@ describe("IcechunkStore", () => {
   describe("getRange", () => {
     it("should use getChunkRange for chunk keys", async () => {
       const getChunkSpy = vi.fn();
-      const getChunkRangeSpy = vi.fn().mockResolvedValue(new Uint8Array([7, 8]));
+      const getChunkRangeSpy = vi
+        .fn()
+        .mockResolvedValue(new Uint8Array([7, 8]));
 
       const store = createStoreWithMockSession({
         getRawMetadata: vi.fn(),
@@ -194,7 +196,9 @@ describe("IcechunkStore", () => {
     });
 
     it("should use getChunkRange with suffixLength for shard index reads", async () => {
-      const getChunkRangeSpy = vi.fn().mockResolvedValue(new Uint8Array([1, 2, 3, 4]));
+      const getChunkRangeSpy = vi
+        .fn()
+        .mockResolvedValue(new Uint8Array([1, 2, 3, 4]));
 
       const store = createStoreWithMockSession({
         getRawMetadata: vi.fn(),
@@ -256,10 +260,13 @@ describe("IcechunkStore", () => {
         getChunk: vi.fn(),
       });
 
-      const result = await store.getRange("/missing/zarr.json" as AbsolutePath, {
-        offset: 0,
-        length: 5,
-      });
+      const result = await store.getRange(
+        "/missing/zarr.json" as AbsolutePath,
+        {
+          offset: 0,
+          length: 5,
+        },
+      );
 
       expect(result).toBeUndefined();
     });

@@ -821,7 +821,9 @@ describe("ReadSession", () => {
         ok: true,
         status: 200,
         statusText: "OK",
-        arrayBuffer: vi.fn().mockResolvedValue(new Uint8Array([9, 8, 7, 6]).buffer),
+        arrayBuffer: vi
+          .fn()
+          .mockResolvedValue(new Uint8Array([9, 8, 7, 6]).buffer),
       };
       const fetchSpy = vi
         .spyOn(globalThis, "fetch")
@@ -943,7 +945,9 @@ describe("ReadSession", () => {
         ok: true,
         status: 200,
         statusText: "OK",
-        arrayBuffer: vi.fn().mockResolvedValue(new Uint8Array([9, 8, 7, 6]).buffer),
+        arrayBuffer: vi
+          .fn()
+          .mockResolvedValue(new Uint8Array([9, 8, 7, 6]).buffer),
       };
       const fetchSpy = vi
         .spyOn(globalThis, "fetch")
