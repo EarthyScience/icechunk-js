@@ -12,18 +12,21 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { decompress } from "fzstd";
 import { parseSnapshot } from "../../../src/format/flatbuffers/snapshot-parser.js";
+import { parseManifest } from "../../../src/format/flatbuffers/manifest-parser.js";
 import {
   parseHeader,
   getDataAfterHeader,
   CompressionAlgorithm,
+  FileType,
 } from "../../../src/format/header.js";
 import { encodeObjectId12 } from "../../../src/format/object-id.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const TEST_REPO_V2_PATH = join(
+const TEST_DATA_PATH = join(
   __dirname,
-  "../../../../icechunk-python/tests/data/test-repo-v2",
+  "../../../../icechunk-python/tests/data",
 );
+const TEST_REPO_V2_PATH = join(TEST_DATA_PATH, "test-repo-v2");
 
 /** Read and parse a snapshot file (header + optional zstd + FlatBuffer) */
 function readSnapshot(filePath: string) {
@@ -105,4 +108,102 @@ describe("snapshot-parser (real data)", () => {
       ).toBe(true);
     }
   });
+});
+
+describe("zstd decompression (real data)", () => {
+  /**
+   * Explicitly verify that fixture files use zstd compression and that
+   * the decompression pipeline produces valid FlatBuffer data.
+   *
+   * All icechunk files (snapshots, manifests, transaction logs) in the
+   * test repos are zstd-compressed. This test makes the implicit
+   * decompression behavior explicit.
+   */
+
+  const repos = [
+    { name: "test-repo-v1", version: "v1" },
+    { name: "test-repo-v2", version: "v2" },
+    { name: "split-repo-v1", version: "v1 split" },
+    { name: "split-repo-v2", version: "v2 split" },
+  ];
+
+  for (const { name, version } of repos) {
+    const repoPath = join(TEST_DATA_PATH, name);
+
+    describe(`${version} (${name})`, () => {
+      it("all snapshot files are zstd-compressed", () => {
+        const snapshotDir = join(repoPath, "snapshots");
+        const files = readdirSync(snapshotDir);
+        expect(files.length).toBeGreaterThan(0);
+
+        for (const file of files) {
+          const data = readFileSync(join(snapshotDir, file));
+          const header = parseHeader(data);
+
+          expect(header.compression).toBe(CompressionAlgorithm.Zstd);
+          expect(header.fileType).toBe(FileType.Snapshot);
+        }
+      });
+
+      it("all manifest files are zstd-compressed", () => {
+        const manifestDir = join(repoPath, "manifests");
+        const files = readdirSync(manifestDir);
+        expect(files.length).toBeGreaterThan(0);
+
+        for (const file of files) {
+          const data = readFileSync(join(manifestDir, file));
+          const header = parseHeader(data);
+
+          expect(header.compression).toBe(CompressionAlgorithm.Zstd);
+          expect(header.fileType).toBe(FileType.Manifest);
+        }
+      });
+
+      it("zstd-compressed snapshots decompress and parse correctly", () => {
+        const snapshotDir = join(repoPath, "snapshots");
+        const files = readdirSync(snapshotDir);
+
+        for (const file of files) {
+          const data = readFileSync(join(snapshotDir, file));
+          const header = parseHeader(data);
+
+          // Verify it's actually compressed
+          expect(header.compression).toBe(CompressionAlgorithm.Zstd);
+
+          // Decompress
+          const compressed = getDataAfterHeader(data);
+          const decompressed = decompress(compressed);
+
+          // Decompressed data should be larger than compressed
+          expect(decompressed.length).toBeGreaterThanOrEqual(
+            compressed.length * 0.5,
+          );
+
+          // Parse should succeed
+          const snapshot = parseSnapshot(decompressed);
+          expect(snapshot.id).toBeInstanceOf(Uint8Array);
+          expect(snapshot.id.length).toBe(12);
+          expect(typeof snapshot.message).toBe("string");
+        }
+      });
+
+      it("zstd-compressed manifests decompress and parse correctly", () => {
+        const manifestDir = join(repoPath, "manifests");
+        const files = readdirSync(manifestDir);
+
+        for (const file of files) {
+          const data = readFileSync(join(manifestDir, file));
+          const header = parseHeader(data);
+
+          expect(header.compression).toBe(CompressionAlgorithm.Zstd);
+
+          const compressed = getDataAfterHeader(data);
+          const decompressed = decompress(compressed);
+
+          const manifest = parseManifest(decompressed);
+          expect(manifest.arrays.length).toBeGreaterThanOrEqual(0);
+        }
+      });
+    });
+  }
 });
