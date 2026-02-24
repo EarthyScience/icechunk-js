@@ -38,7 +38,11 @@ export type {
   RequestOptions,
   FetchClient,
 } from "./storage/storage.js";
-export { NotFoundError, StorageError, DefaultFetchClient } from "./storage/storage.js";
+export {
+  NotFoundError,
+  StorageError,
+  DefaultFetchClient,
+} from "./storage/storage.js";
 
 // Format types (for advanced usage)
 export type {

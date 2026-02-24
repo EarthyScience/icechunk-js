@@ -88,10 +88,7 @@ export class IcechunkStore implements AsyncReadable {
   private fetchClient?: FetchClient;
   private basePath: string = "";
 
-  private constructor(
-    session: ReadSession,
-    fetchClient?: FetchClient,
-  ) {
+  private constructor(session: ReadSession, fetchClient?: FetchClient) {
     if (!(session instanceof ReadSession)) {
       throw new Error(
         "IcechunkStore constructor is private. Use IcechunkStore.open() instead.",

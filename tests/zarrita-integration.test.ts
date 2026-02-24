@@ -512,16 +512,18 @@ describe("Zarrita Integration", () => {
       // FetchClient intercepts S3 virtual chunk URLs and serves mock data.
       // No need to mock globalThis.fetch — fetchClient only applies to virtual chunks.
       const fetchClient = {
-        fetch: vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
-          if (url.includes("testbucket.s3.amazonaws.com")) {
-            return new Response(chunkBytes.buffer.slice(0), {
-              status: 206,
-              headers: { "Content-Type": "application/octet-stream" },
-            });
-          }
-          // Should not reach here for virtual chunk URLs
-          return originalFetch(url, init);
-        }),
+        fetch: vi
+          .fn()
+          .mockImplementation(async (url: string, init?: RequestInit) => {
+            if (url.includes("testbucket.s3.amazonaws.com")) {
+              return new Response(chunkBytes.buffer.slice(0), {
+                status: 206,
+                headers: { "Content-Type": "application/octet-stream" },
+              });
+            }
+            // Should not reach here for virtual chunk URLs
+            return originalFetch(url, init);
+          }),
       };
 
       const store = await IcechunkStore.open(getFixtureUrl("test-repo-v1"), {
