@@ -301,9 +301,7 @@ describe("Zarrita Integration", () => {
 
     describe("v1 format", () => {
       it("should read split array through multiple manifests", async () => {
-        const store = await IcechunkStore.open(
-          getFixtureUrl("split-repo-v1"),
-        );
+        const store = await IcechunkStore.open(getFixtureUrl("split-repo-v1"));
         const location = z.root(store).resolve("/group1/split");
         const arr = await z.open(location, { kind: "array" });
 
@@ -319,9 +317,7 @@ describe("Zarrita Integration", () => {
       });
 
       it("should read inline small_chunks", async () => {
-        const store = await IcechunkStore.open(
-          getFixtureUrl("split-repo-v1"),
-        );
+        const store = await IcechunkStore.open(getFixtureUrl("split-repo-v1"));
         const location = z.root(store).resolve("/group1/small_chunks");
         const arr = await z.open(location, { kind: "array" });
 
@@ -336,9 +332,7 @@ describe("Zarrita Integration", () => {
       });
 
       it("should open root group", async () => {
-        const store = await IcechunkStore.open(
-          getFixtureUrl("split-repo-v1"),
-        );
+        const store = await IcechunkStore.open(getFixtureUrl("split-repo-v1"));
         const group = await z.open(store, { kind: "group" });
         expect(group).toBeDefined();
       });
@@ -346,9 +340,7 @@ describe("Zarrita Integration", () => {
 
     describe("v2 format", () => {
       it("should read split array through multiple manifests", async () => {
-        const store = await IcechunkStore.open(
-          getFixtureUrl("split-repo-v2"),
-        );
+        const store = await IcechunkStore.open(getFixtureUrl("split-repo-v2"));
         const location = z.root(store).resolve("/group1/split");
         const arr = await z.open(location, { kind: "array" });
 
@@ -364,9 +356,7 @@ describe("Zarrita Integration", () => {
       });
 
       it("should read inline small_chunks", async () => {
-        const store = await IcechunkStore.open(
-          getFixtureUrl("split-repo-v2"),
-        );
+        const store = await IcechunkStore.open(getFixtureUrl("split-repo-v2"));
         const location = z.root(store).resolve("/group1/small_chunks");
         const arr = await z.open(location, { kind: "array" });
 
@@ -459,18 +449,16 @@ describe("Zarrita Integration", () => {
 
       // Intercept fetch: serve virtual chunk URL, pass through fixture server
       const originalFetch = globalThis.fetch;
-      vi.spyOn(globalThis, "fetch").mockImplementation(
-        async (input, init) => {
-          const url = typeof input === "string" ? input : input.toString();
-          if (url.includes("testbucket.s3.amazonaws.com")) {
-            return new Response(chunkBytes.buffer.slice(0), {
-              status: 206,
-              headers: { "Content-Type": "application/octet-stream" },
-            });
-          }
-          return originalFetch(input, init);
-        },
-      );
+      vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url.includes("testbucket.s3.amazonaws.com")) {
+          return new Response(chunkBytes.buffer.slice(0), {
+            status: 206,
+            headers: { "Content-Type": "application/octet-stream" },
+          });
+        }
+        return originalFetch(input, init);
+      });
 
       const store = await IcechunkStore.open(getFixtureUrl("test-repo-v1"));
       const location = z.root(store).resolve("/group1/big_chunks");
@@ -491,18 +479,16 @@ describe("Zarrita Integration", () => {
       );
 
       const originalFetch = globalThis.fetch;
-      vi.spyOn(globalThis, "fetch").mockImplementation(
-        async (input, init) => {
-          const url = typeof input === "string" ? input : input.toString();
-          if (url.includes("testbucket.s3.amazonaws.com")) {
-            return new Response(chunkBytes.buffer.slice(0), {
-              status: 206,
-              headers: { "Content-Type": "application/octet-stream" },
-            });
-          }
-          return originalFetch(input, init);
-        },
-      );
+      vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url.includes("testbucket.s3.amazonaws.com")) {
+          return new Response(chunkBytes.buffer.slice(0), {
+            status: 206,
+            headers: { "Content-Type": "application/octet-stream" },
+          });
+        }
+        return originalFetch(input, init);
+      });
 
       const store = await IcechunkStore.open(getFixtureUrl("test-repo-v2"));
       const location = z.root(store).resolve("/group1/big_chunks");
@@ -531,23 +517,21 @@ describe("Zarrita Integration", () => {
       });
 
       // Intercept fetch for the rewritten URL
-      vi.spyOn(globalThis, "fetch").mockImplementation(
-        async (input, init) => {
-          const url = typeof input === "string" ? input : input.toString();
-          if (url === "https://mock-proxy.test/virtual-chunk") {
-            // Verify custom headers are merged
-            const headers = init?.headers as Record<string, string>;
-            expect(headers["X-Custom-Auth"]).toBe("token123");
-            expect(headers["Range"]).toBeDefined();
+      vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url === "https://mock-proxy.test/virtual-chunk") {
+          // Verify custom headers are merged
+          const headers = init?.headers as Record<string, string>;
+          expect(headers["X-Custom-Auth"]).toBe("token123");
+          expect(headers["Range"]).toBeDefined();
 
-            return new Response(chunkBytes.buffer.slice(0), {
-              status: 206,
-              headers: { "Content-Type": "application/octet-stream" },
-            });
-          }
-          return originalFetch(input, init);
-        },
-      );
+          return new Response(chunkBytes.buffer.slice(0), {
+            status: 206,
+            headers: { "Content-Type": "application/octet-stream" },
+          });
+        }
+        return originalFetch(input, init);
+      });
 
       const store = await IcechunkStore.open(getFixtureUrl("test-repo-v1"), {
         transformRequest,
