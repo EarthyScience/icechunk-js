@@ -287,15 +287,26 @@ export class IcechunkStore implements AsyncReadable {
   }
 
   /**
-   * List direct children of a group.
+   * List direct children of a group by name.
    *
    * @param parentPath - Path to the parent group (use "/" for root).
    *                     When omitted, uses the store's base path (or root).
-   * @returns Array of child nodes
+   * @returns Array of child names (e.g., ["temperature", "precipitation"])
    */
-  listChildren(parentPath?: string): NodeSnapshot[] {
-    const path = parentPath ?? (this.basePath ? `/${this.basePath}` : "/");
-    return this.session.listChildren(path);
+  listChildren(parentPath?: string): string[] {
+    let path: string;
+    if (parentPath == null) {
+      path = this.basePath ? `/${this.basePath}` : "/";
+    } else {
+      // Normalize: ensure leading slash for session API
+      path = parentPath.startsWith("/") ? parentPath : `/${parentPath}`;
+    }
+    const nodes = this.session.listChildren(path);
+    return nodes.map((node) => {
+      // Extract the last path segment as the child name
+      const segments = node.path.split("/");
+      return segments[segments.length - 1];
+    });
   }
 
   /**
