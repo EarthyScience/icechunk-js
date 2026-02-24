@@ -3,6 +3,11 @@
 Read-only JavaScript/TypeScript reader for Icechunk repositories, designed for
 use with [zarrita](https://github.com/manzt/zarrita.js).
 
+- ~50KB bundle, zero native dependencies
+- Works in browsers, Node.js 18+, Deno, and Bun
+- Icechunk v1 and v2 format auto-detection
+- All chunk payload types: inline, native, and virtual
+
 ## Getting Started
 
 ```bash
@@ -40,18 +45,63 @@ npm run typecheck
 ### IcechunkStore
 
 The main class for zarrita integration. Implements zarrita's `AsyncReadable`
-interface.
+interface with both `get()` and `getRange()` (needed for sharded arrays).
 
 ```typescript
 import { IcechunkStore } from "@carbonplan/icechunk-js";
 
+// Open from a URL (default: branch "main")
 const store = await IcechunkStore.open("https://example.com/repo", {
-  branch: "main", // default; or use tag/snapshot
+  branch: "main",
   // tag: 'v1.0',
   // snapshot: 'ABC123...',
-  // formatVersion: 'v1',  // skip format auto-detection for v1 repos
+  // formatVersion: 'v1',     // skip format auto-detection for v1 repos
+  // maxManifestCacheSize: 50, // LRU cache size (default: 100)
+});
+
+// Open from an existing ReadSession
+const store = await IcechunkStore.open(session);
+
+// Open from a custom Storage backend
+const store = await IcechunkStore.open(myStorage, { branch: "main" });
+```
+
+#### Store methods
+
+```typescript
+// Scope to a subpath (shares the same session and cache)
+const scoped = store.resolve("group/subgroup");
+
+// Browse the hierarchy
+const children = store.listChildren("/"); // direct children of root
+const allNodes = store.listNodes(); // all nodes in the snapshot
+const node = store.getNode("/temperature"); // single node by path
+const meta = store.getMetadata("/temperature"); // parsed zarr.json
+
+// Access the underlying session for advanced operations
+const session = store.session;
+```
+
+#### Virtual chunk authentication
+
+For private datasets with virtual chunks (S3, GCS, Azure), use the
+`transformRequest` callback to inject credentials:
+
+```typescript
+const store = await IcechunkStore.open("https://example.com/repo", {
+  transformRequest: async (url, opts) => ({
+    url: await presign(url),
+    headers: { Authorization: `Bearer ${token}` },
+  }),
 });
 ```
+
+Cloud storage URLs in virtual chunk references are automatically translated:
+
+- `s3://bucket/key` → `https://bucket.s3.amazonaws.com/key`
+- `gs://bucket/key` → `https://storage.googleapis.com/bucket/key`
+- `az://account/container/path` → `https://account.blob.core.windows.net/container/path`
+- `abfs://container@account.dfs.core.windows.net/path` → `https://account.blob.core.windows.net/container/path`
 
 ### Repository
 
@@ -78,23 +128,41 @@ const session = await repo.checkoutBranch("main");
 // or: repo.checkoutSnapshot('ABCDEFGHIJKLMNOP')
 ```
 
-### ReadSession
-
-Low-level access to nodes and chunks.
+#### Walking commit history
 
 ```typescript
-// Get snapshot info
+for await (const entry of repo.walkHistory(session)) {
+  console.log(entry.id, entry.message, entry.flushedAt);
+}
+```
+
+### ReadSession
+
+Low-level access to nodes, chunks, and snapshot metadata.
+
+```typescript
+// Snapshot info
 const snapshotId = session.getSnapshotId();
+const parentId = session.getParentSnapshotId(); // null for root
 const message = session.getMessage();
 const timestamp = session.getFlushedAt();
+const metadata = session.getSnapshotMetadata();
 
 // Navigate the hierarchy
 const nodes = session.listNodes();
 const children = session.listChildren("/group");
+const node = session.getNode("/array");
 
-// Get metadata and chunks
-const metadata = session.getMetadata("/array");
+// Get Zarr metadata and chunks
+const zarrMeta = session.getMetadata("/array");
 const chunk = await session.getChunk("/array", [0, 0, 0]);
+
+// Transaction log (what changed in this snapshot)
+const txLog = await session.loadTransactionLog();
+if (txLog) {
+  console.log("New arrays:", txLog.newArrays.length);
+  console.log("Updated chunks:", txLog.updatedChunks.length);
+}
 ```
 
 ### HttpStorage
@@ -125,9 +193,6 @@ class MyStorage implements Storage {
   async *listPrefix(prefix: string): AsyncIterable<string> { ... }
 }
 ```
-
-The `RequestOptions` type contains an optional `signal: AbortSignal` for
-cancellation support.
 
 ## License
 
