@@ -60,6 +60,9 @@ export interface IcechunkStoreOptions {
    * - Route through a proxy
    */
   transformRequest?: TransformRequest;
+
+  /** Maximum number of manifests to cache in the LRU cache (default: 100) */
+  maxManifestCacheSize?: number;
 }
 
 /**
@@ -145,15 +148,21 @@ export class IcechunkStore implements AsyncReadable {
       requestOptions,
     );
 
+    // Build session options: merge request options with cache size
+    const sessionOptions = {
+      ...requestOptions,
+      maxManifestCacheSize: options.maxManifestCacheSize,
+    };
+
     let session: ReadSession;
     if (options.snapshot) {
-      session = await repo.checkoutSnapshot(options.snapshot, requestOptions);
+      session = await repo.checkoutSnapshot(options.snapshot, sessionOptions);
     } else if (options.tag) {
-      session = await repo.checkoutTag(options.tag, requestOptions);
+      session = await repo.checkoutTag(options.tag, sessionOptions);
     } else {
       session = await repo.checkoutBranch(
         options.branch ?? "main",
-        requestOptions,
+        sessionOptions,
       );
     }
 

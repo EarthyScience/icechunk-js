@@ -65,6 +65,9 @@ export type {
   ObjectId8,
 } from "./format/flatbuffers/types.js";
 
+// Cache utilities
+export { LRUCache } from "./cache/lru.js";
+
 // Format utilities
 export {
   SpecVersion,

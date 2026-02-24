@@ -5,6 +5,7 @@
 import type { Storage, ByteRange, RequestOptions } from "../storage/storage.js";
 import { AbortError } from "../storage/storage.js";
 import { decompress } from "fzstd";
+import { LRUCache } from "../cache/lru.js";
 import {
   parseHeader,
   validateFileType,
@@ -44,16 +45,18 @@ export class ReadSession {
   private storage: Storage;
   private snapshot: Snapshot;
   private specVersion: SpecVersion;
-  private manifestCache: Map<string, Manifest> = new Map();
+  private manifestCache: LRUCache<string, Manifest>;
 
   private constructor(
     storage: Storage,
     snapshot: Snapshot,
     specVersion: SpecVersion,
+    maxManifestCacheSize: number = 100,
   ) {
     this.storage = storage;
     this.snapshot = snapshot;
     this.specVersion = specVersion;
+    this.manifestCache = new LRUCache(maxManifestCacheSize);
   }
 
   /**
@@ -67,14 +70,19 @@ export class ReadSession {
   static async open(
     storage: Storage,
     snapshotId: Uint8Array,
-    options?: RequestOptions,
+    options?: RequestOptions & { maxManifestCacheSize?: number },
   ): Promise<ReadSession> {
     const { snapshot, specVersion } = await ReadSession.loadSnapshot(
       storage,
       snapshotId,
       options,
     );
-    return new ReadSession(storage, snapshot, specVersion);
+    return new ReadSession(
+      storage,
+      snapshot,
+      specVersion,
+      options?.maxManifestCacheSize,
+    );
   }
 
   /** Load and parse a snapshot from storage */
@@ -469,10 +477,12 @@ export class ReadSession {
     let rangeEnd: number;
 
     if ("suffixLength" in range) {
-      rangeStart = payload.type === "inline"
-        ? payload.data.length - range.suffixLength
-        : payload.length - range.suffixLength;
-      rangeEnd = payload.type === "inline" ? payload.data.length : payload.length;
+      rangeStart =
+        payload.type === "inline"
+          ? payload.data.length - range.suffixLength
+          : payload.length - range.suffixLength;
+      rangeEnd =
+        payload.type === "inline" ? payload.data.length : payload.length;
     } else {
       rangeStart = range.offset;
       rangeEnd = range.offset + range.length;
