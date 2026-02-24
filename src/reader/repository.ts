@@ -12,7 +12,7 @@ import {
   PATHS,
   REPO_INFO_PATH,
 } from "../format/constants.js";
-import { decodeObjectId12 } from "../format/object-id.js";
+import { decodeObjectId12, encodeObjectId12 } from "../format/object-id.js";
 import {
   parseRepo,
   resolveBranch,
@@ -472,6 +472,41 @@ export class Repository {
         ? decodeObjectId12(snapshotId)
         : snapshotId;
     return ReadSession.open(this.storage, id, options);
+  }
+
+  /**
+   * Walk the snapshot history chain starting from the given session.
+   *
+   * Yields `{ id, message, flushedAt, metadata }` for each snapshot,
+   * walking from the current snapshot back to the root.
+   *
+   * @param session - Read session to start from
+   * @param options - Optional request options (signal for cancellation)
+   */
+  async *walkHistory(
+    session: ReadSession,
+    options?: RequestOptions,
+  ): AsyncGenerator<{
+    id: string;
+    message: string;
+    flushedAt: Date;
+    metadata: Record<string, unknown>;
+  }> {
+    let current: ReadSession | null = session;
+
+    while (current) {
+      yield {
+        id: encodeObjectId12(current.getSnapshotId()),
+        message: current.getMessage(),
+        flushedAt: current.getFlushedAt(),
+        metadata: current.getSnapshotMetadata(),
+      };
+
+      const parentId = current.getParentSnapshotId();
+      if (!parentId) break;
+
+      current = await this.checkoutSnapshot(parentId, options);
+    }
   }
 
   /**

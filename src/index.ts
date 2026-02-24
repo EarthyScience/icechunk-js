@@ -63,6 +63,10 @@ export type {
   MetadataItem,
   ObjectId12,
   ObjectId8,
+  TransactionLogEntry,
+  ArrayUpdatedChunksInfo,
+  UpdatedChunkIndices,
+  MoveOperationInfo,
 } from "./format/flatbuffers/types.js";
 
 // Cache utilities

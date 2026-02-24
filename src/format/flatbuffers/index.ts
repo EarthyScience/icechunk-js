@@ -10,3 +10,4 @@ export {
   getChunkPayload,
 } from "./manifest-parser.js";
 export { deserializeMetadata } from "./metadata.js";
+export { parseTransactionLog } from "./transaction-log-parser.js";

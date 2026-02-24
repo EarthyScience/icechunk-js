@@ -15,6 +15,9 @@ export const PATHS = {
 
   /** Chunks directory */
   CHUNKS: "chunks",
+
+  /** Transaction logs directory */
+  TRANSACTIONS: "transactions",
 } as const;
 
 /** Repository info file path (v2 format) */
@@ -109,4 +112,14 @@ export function getManifestPath(id: string): string {
  */
 export function getChunkPath(id: string): string {
   return `${PATHS.CHUNKS}/${id}`;
+}
+
+/**
+ * Get the storage path for a transaction log.
+ *
+ * @param id - Snapshot ID as Base32 string
+ * @returns Path to the transaction log file
+ */
+export function getTransactionLogPath(id: string): string {
+  return `${PATHS.TRANSACTIONS}/${id}`;
 }

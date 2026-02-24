@@ -231,3 +231,37 @@ export type ChunkPayload =
   | InlineChunkPayload
   | NativeChunkPayload
   | VirtualChunkPayload;
+
+// =============================================================================
+// Transaction log types (from transaction_log.fbs)
+// =============================================================================
+
+/** Chunk coordinates that were updated */
+export interface UpdatedChunkIndices {
+  coords: number[];
+}
+
+/** Updated chunks info for a single array */
+export interface ArrayUpdatedChunksInfo {
+  nodeId: ObjectId8;
+  chunks: UpdatedChunkIndices[];
+}
+
+/** A node move operation */
+export interface MoveOperationInfo {
+  from: string;
+  to: string;
+}
+
+/** A transaction log entry describing changes in a snapshot */
+export interface TransactionLogEntry {
+  id: ObjectId12;
+  newGroups: ObjectId8[];
+  newArrays: ObjectId8[];
+  deletedGroups: ObjectId8[];
+  deletedArrays: ObjectId8[];
+  updatedArrays: ObjectId8[];
+  updatedGroups: ObjectId8[];
+  updatedChunks: ArrayUpdatedChunksInfo[];
+  movedNodes: MoveOperationInfo[];
+}
