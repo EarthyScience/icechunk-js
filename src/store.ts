@@ -9,6 +9,7 @@ import { Repository } from "./reader/repository.js";
 import { ReadSession } from "./reader/session.js";
 import { HttpStorage } from "./storage/http-storage.js";
 import type { Storage, TransformRequest } from "./storage/storage.js";
+import type { NodeSnapshot } from "./format/flatbuffers/types.js";
 
 /**
  * zarrita's AbsolutePath type - paths must start with "/"
@@ -82,8 +83,10 @@ export interface IcechunkStoreOptions {
  * ```
  */
 export class IcechunkStore implements AsyncReadable {
-  private session: ReadSession;
+  /** The underlying read session. Exposed for advanced usage. */
+  readonly session: ReadSession;
   private transformRequest?: TransformRequest;
+  private basePath: string = "";
 
   private constructor(
     session: ReadSession,
@@ -188,14 +191,15 @@ export class IcechunkStore implements AsyncReadable {
     if (opts?.signal?.aborted) return undefined;
 
     const parsed = parseZarrKey(key);
+    const resolvedPath = this.resolvePath(parsed.path);
 
     try {
       if (parsed.type === "metadata") {
-        const data = this.session.getRawMetadata(parsed.path);
+        const data = this.session.getRawMetadata(resolvedPath);
         return data ?? undefined;
       }
 
-      const chunk = await this.session.getChunk(parsed.path, parsed.coords, {
+      const chunk = await this.session.getChunk(resolvedPath, parsed.coords, {
         signal: opts?.signal,
         transformRequest: this.transformRequest,
       });
@@ -225,12 +229,13 @@ export class IcechunkStore implements AsyncReadable {
     if (opts?.signal?.aborted) return undefined;
 
     const parsed = parseZarrKey(key);
+    const resolvedPath = this.resolvePath(parsed.path);
 
     try {
       if (parsed.type === "chunk") {
         // Use targeted byte-range read through the session
         const data = await this.session.getChunkRange(
-          parsed.path,
+          resolvedPath,
           parsed.coords,
           range,
           {
@@ -242,7 +247,7 @@ export class IcechunkStore implements AsyncReadable {
       }
 
       // For metadata keys, fetch full data and slice
-      const data = this.session.getRawMetadata(parsed.path);
+      const data = this.session.getRawMetadata(resolvedPath);
       if (!data) return undefined;
 
       if ("suffixLength" in range) {
@@ -252,6 +257,80 @@ export class IcechunkStore implements AsyncReadable {
     } catch {
       return undefined;
     }
+  }
+
+  /** Prepend basePath to a parsed path. */
+  private resolvePath(path: string): string {
+    if (!this.basePath) return path;
+    // path is "/" for root or "/group/array" for nested
+    if (path === "/") return `/${this.basePath}`;
+    return `/${this.basePath}${path}`;
+  }
+
+  /**
+   * Create a store scoped to a subpath.
+   *
+   * The returned store shares the same session (and manifest cache)
+   * but prepends `path` to all key lookups. This matches zarrita's
+   * `root(store).resolve(path)` pattern.
+   *
+   * @param path - Subpath to scope to (e.g., "group/array")
+   * @returns A new IcechunkStore scoped to the subpath
+   */
+  resolve(path: string): IcechunkStore {
+    const scoped = new IcechunkStore(this.session, this.transformRequest);
+    const cleanPath = path.replace(/^\/+|\/+$/g, "");
+    scoped.basePath = this.basePath
+      ? `${this.basePath}/${cleanPath}`
+      : cleanPath;
+    return scoped;
+  }
+
+  /**
+   * List direct children of a group.
+   *
+   * @param parentPath - Path to the parent group (use "/" for root).
+   *                     When omitted, uses the store's base path (or root).
+   * @returns Array of child nodes
+   */
+  listChildren(parentPath?: string): NodeSnapshot[] {
+    const path = parentPath ?? (this.basePath ? `/${this.basePath}` : "/");
+    return this.session.listChildren(path);
+  }
+
+  /**
+   * List all nodes in the snapshot.
+   *
+   * @returns Array of all nodes
+   */
+  listNodes(): NodeSnapshot[] {
+    return this.session.listNodes();
+  }
+
+  /**
+   * Get a node by path.
+   *
+   * @param path - Absolute path (e.g., "/array" or "/group/nested")
+   * @returns NodeSnapshot or null if not found
+   */
+  getNode(path: string): NodeSnapshot | null {
+    const fullPath = this.basePath
+      ? `/${this.basePath}/${path.replace(/^\//, "")}`.replace(/\/+/g, "/")
+      : path;
+    return this.session.getNode(fullPath);
+  }
+
+  /**
+   * Get parsed Zarr metadata for a node.
+   *
+   * @param path - Path to the node
+   * @returns Parsed JSON metadata or null if node not found
+   */
+  getMetadata(path: string): unknown | null {
+    const fullPath = this.basePath
+      ? `/${this.basePath}/${path.replace(/^\//, "")}`.replace(/\/+/g, "/")
+      : path;
+    return this.session.getMetadata(fullPath);
   }
 }
 
