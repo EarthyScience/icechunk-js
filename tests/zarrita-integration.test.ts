@@ -12,7 +12,7 @@
  * Also tests:
  * - split-repo-v1/v2: Manifest splitting with group1/split (10x10 float32, 3x3 chunks)
  * - test-repo-v2-migrated: V1-to-V2 migrated repository
- * - Virtual chunk resolution through transformRequest
+ * - Virtual chunk resolution through fetchClient
  */
 
 import { describe, it, expect, vi, afterEach } from "vitest";
@@ -502,39 +502,30 @@ describe("Zarrita Integration", () => {
       }
     });
 
-    it("should use transformRequest to rewrite virtual chunk URL", async () => {
+    it("should use fetchClient to intercept virtual chunk fetch", async () => {
       const chunkBytes = await getChunkBytesForMocking(
         getFixtureUrl("test-repo-v1"),
       );
 
       const originalFetch = globalThis.fetch;
-      const transformRequest = vi.fn().mockImplementation((url: string) => {
-        // Rewrite the S3 URL to a custom proxy URL
-        return {
-          url: "https://mock-proxy.test/virtual-chunk",
-          headers: { "X-Custom-Auth": "token123" },
-        };
-      });
 
-      // Intercept fetch for the rewritten URL
-      vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-        const url = typeof input === "string" ? input : input.toString();
-        if (url === "https://mock-proxy.test/virtual-chunk") {
-          // Verify custom headers are merged
-          const headers = init?.headers as Record<string, string>;
-          expect(headers["X-Custom-Auth"]).toBe("token123");
-          expect(headers["Range"]).toBeDefined();
-
-          return new Response(chunkBytes.buffer.slice(0), {
-            status: 206,
-            headers: { "Content-Type": "application/octet-stream" },
-          });
-        }
-        return originalFetch(input, init);
-      });
+      // FetchClient intercepts S3 virtual chunk URLs and serves mock data.
+      // No need to mock globalThis.fetch — fetchClient only applies to virtual chunks.
+      const fetchClient = {
+        fetch: vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+          if (url.includes("testbucket.s3.amazonaws.com")) {
+            return new Response(chunkBytes.buffer.slice(0), {
+              status: 206,
+              headers: { "Content-Type": "application/octet-stream" },
+            });
+          }
+          // Should not reach here for virtual chunk URLs
+          return originalFetch(url, init);
+        }),
+      };
 
       const store = await IcechunkStore.open(getFixtureUrl("test-repo-v1"), {
-        transformRequest,
+        fetchClient,
       });
       const location = z.root(store).resolve("/group1/big_chunks");
       const arr = await z.open(location, { kind: "array" });
@@ -547,10 +538,14 @@ describe("Zarrita Integration", () => {
         expect(data.data[i]).toBe(42.0);
       }
 
-      // Verify transformRequest was called with the translated S3 URL
-      expect(transformRequest).toHaveBeenCalledWith(
+      // Verify fetchClient.fetch was called with the translated S3 URL
+      expect(fetchClient.fetch).toHaveBeenCalledWith(
         expect.stringContaining("testbucket.s3.amazonaws.com"),
-        { method: "GET" },
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Range: expect.any(String),
+          }),
+        }),
       );
     });
   });

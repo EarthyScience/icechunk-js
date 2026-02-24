@@ -8,7 +8,7 @@
 import { Repository } from "./reader/repository.js";
 import { ReadSession } from "./reader/session.js";
 import { HttpStorage } from "./storage/http-storage.js";
-import type { Storage, TransformRequest } from "./storage/storage.js";
+import type { Storage, FetchClient } from "./storage/storage.js";
 import type { NodeSnapshot } from "./format/flatbuffers/types.js";
 
 /**
@@ -53,14 +53,14 @@ export interface IcechunkStoreOptions {
   formatVersion?: "v1" | "v2";
 
   /**
-   * Callback to transform virtual chunk URLs before fetching.
+   * Pluggable HTTP client for virtual chunk fetching.
    *
    * Use this to:
    * - Generate pre-signed S3 URLs
    * - Add authentication headers
    * - Route through a proxy
    */
-  transformRequest?: TransformRequest;
+  fetchClient?: FetchClient;
 
   /** Maximum number of manifests to cache in the LRU cache (default: 100) */
   maxManifestCacheSize?: number;
@@ -85,12 +85,12 @@ export interface IcechunkStoreOptions {
 export class IcechunkStore implements AsyncReadable {
   /** The underlying read session. Exposed for advanced usage. */
   readonly session: ReadSession;
-  private transformRequest?: TransformRequest;
+  private fetchClient?: FetchClient;
   private basePath: string = "";
 
   private constructor(
     session: ReadSession,
-    transformRequest?: TransformRequest,
+    fetchClient?: FetchClient,
   ) {
     if (!(session instanceof ReadSession)) {
       throw new Error(
@@ -98,7 +98,7 @@ export class IcechunkStore implements AsyncReadable {
       );
     }
     this.session = session;
-    this.transformRequest = transformRequest;
+    this.fetchClient = fetchClient;
   }
 
   /**
@@ -116,11 +116,11 @@ export class IcechunkStore implements AsyncReadable {
    * Open an IcechunkStore from an existing ReadSession.
    *
    * @param session - Existing ReadSession
-   * @param options - Store options (only transformRequest is used)
+   * @param options - Store options (only fetchClient is used)
    */
   static async open(
     session: ReadSession,
-    options?: Pick<IcechunkStoreOptions, "transformRequest">,
+    options?: Pick<IcechunkStoreOptions, "fetchClient">,
   ): Promise<IcechunkStore>;
 
   /**
@@ -139,7 +139,7 @@ export class IcechunkStore implements AsyncReadable {
     options: IcechunkStoreOptions = {},
   ): Promise<IcechunkStore> {
     if (arg instanceof ReadSession) {
-      return new IcechunkStore(arg, options.transformRequest);
+      return new IcechunkStore(arg, options.fetchClient);
     }
 
     const storage = typeof arg === "string" ? new HttpStorage(arg) : arg;
@@ -169,7 +169,7 @@ export class IcechunkStore implements AsyncReadable {
       );
     }
 
-    return new IcechunkStore(session, options.transformRequest);
+    return new IcechunkStore(session, options.fetchClient);
   }
 
   /**
@@ -201,7 +201,7 @@ export class IcechunkStore implements AsyncReadable {
 
       const chunk = await this.session.getChunk(resolvedPath, parsed.coords, {
         signal: opts?.signal,
-        transformRequest: this.transformRequest,
+        ...(this.fetchClient && { fetchClient: this.fetchClient }),
       });
       return chunk ?? undefined;
     } catch {
@@ -240,7 +240,7 @@ export class IcechunkStore implements AsyncReadable {
           range,
           {
             signal: opts?.signal,
-            transformRequest: this.transformRequest,
+            ...(this.fetchClient && { fetchClient: this.fetchClient }),
           },
         );
         return data ?? undefined;
@@ -278,7 +278,7 @@ export class IcechunkStore implements AsyncReadable {
    * @returns A new IcechunkStore scoped to the subpath
    */
   resolve(path: string): IcechunkStore {
-    const scoped = new IcechunkStore(this.session, this.transformRequest);
+    const scoped = new IcechunkStore(this.session, this.fetchClient);
     const cleanPath = path.replace(/^\/+|\/+$/g, "");
     scoped.basePath = this.basePath
       ? `${this.basePath}/${cleanPath}`

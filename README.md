@@ -84,15 +84,27 @@ const session = store.session;
 
 #### Virtual chunk authentication
 
-For private datasets with virtual chunks (S3, GCS, Azure), use the
-`transformRequest` callback to inject credentials:
+For private datasets with virtual chunks (S3, GCS, Azure), provide a
+`fetchClient` that handles authentication:
 
 ```typescript
+import type { FetchClient } from "@carbonplan/icechunk-js";
+
+const fetchClient: FetchClient = {
+  async fetch(url, init) {
+    // URL rewriting, pre-signing, or header injection happens here.
+    // icechunk-js has already translated s3:// → https:// and built
+    // Range / If-None-Match headers in `init`.
+    const signedUrl = await presign(url);
+    return globalThis.fetch(signedUrl, {
+      ...init,
+      headers: { ...init?.headers, Authorization: `Bearer ${token}` },
+    });
+  },
+};
+
 const store = await IcechunkStore.open("https://example.com/repo", {
-  transformRequest: async (url, opts) => ({
-    url: await presign(url),
-    headers: { Authorization: `Bearer ${token}` },
-  }),
+  fetchClient,
 });
 ```
 

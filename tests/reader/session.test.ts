@@ -418,102 +418,24 @@ describe("ReadSession", () => {
       fetchSpy.mockRestore();
     });
 
-    it("should call transformRequest with correct URL and options", async () => {
+    it("should use fetchClient instead of globalThis.fetch when provided", async () => {
       const mockData = new Uint8Array(10);
       const mockResponse = {
         ok: true,
         status: 206,
         arrayBuffer: vi.fn().mockResolvedValue(mockData.buffer),
       };
-      const fetchSpy = vi
+
+      const fetchClient = {
+        fetch: vi.fn().mockResolvedValue(mockResponse as any),
+      };
+
+      // Spy on globalThis.fetch to ensure it is NOT called
+      const globalFetchSpy = vi
         .spyOn(globalThis, "fetch")
         .mockResolvedValue(mockResponse as any);
 
       const session = createMockSession({ nodes: [] }) as any;
-
-      const transformRequest = vi.fn().mockReturnValue({
-        url: "https://example.com/data.bin",
-      });
-
-      const payload = {
-        type: "virtual" as const,
-        location: "https://example.com/data.bin",
-        offset: 0,
-        length: 10,
-        checksumEtag: null,
-        checksumLastModified: 0,
-      };
-
-      await session.fetchChunkPayload(payload, { transformRequest });
-
-      expect(transformRequest).toHaveBeenCalledWith(
-        "https://example.com/data.bin",
-        { method: "GET" },
-      );
-
-      fetchSpy.mockRestore();
-    });
-
-    it("should merge headers from transformRequest", async () => {
-      const mockData = new Uint8Array(20);
-      const mockResponse = {
-        ok: true,
-        status: 206,
-        arrayBuffer: vi.fn().mockResolvedValue(mockData.buffer),
-      };
-      const fetchSpy = vi
-        .spyOn(globalThis, "fetch")
-        .mockResolvedValue(mockResponse as any);
-
-      const session = createMockSession({ nodes: [] }) as any;
-
-      const transformRequest = vi.fn().mockReturnValue({
-        url: "https://example.com/data.bin",
-        headers: {
-          Authorization: "Bearer token123",
-          "X-Custom-Header": "value",
-        },
-      });
-
-      const payload = {
-        type: "virtual" as const,
-        location: "https://example.com/data.bin",
-        offset: 50,
-        length: 20,
-        checksumEtag: null,
-        checksumLastModified: 0,
-      };
-
-      await session.fetchChunkPayload(payload, { transformRequest });
-
-      expect(fetchSpy).toHaveBeenCalledWith("https://example.com/data.bin", {
-        headers: {
-          Range: "bytes=50-69",
-          Authorization: "Bearer token123",
-          "X-Custom-Header": "value",
-        },
-        signal: undefined,
-      });
-
-      fetchSpy.mockRestore();
-    });
-
-    it("should use transformed URL from transformRequest", async () => {
-      const mockData = new Uint8Array(10);
-      const mockResponse = {
-        ok: true,
-        status: 206,
-        arrayBuffer: vi.fn().mockResolvedValue(mockData.buffer),
-      };
-      const fetchSpy = vi
-        .spyOn(globalThis, "fetch")
-        .mockResolvedValue(mockResponse as any);
-
-      const session = createMockSession({ nodes: [] }) as any;
-
-      const transformRequest = vi.fn().mockReturnValue({
-        url: "https://proxy.example.com/data.bin?signed=abc123",
-      });
 
       const payload = {
         type: "virtual" as const,
@@ -524,144 +446,59 @@ describe("ReadSession", () => {
         checksumLastModified: 0,
       };
 
-      await session.fetchChunkPayload(payload, { transformRequest });
+      await session.fetchChunkPayload(payload, { fetchClient });
 
-      // transformRequest receives the already-translated URL
-      expect(transformRequest).toHaveBeenCalledWith(
+      // fetchClient.fetch should be called with the translated URL
+      expect(fetchClient.fetch).toHaveBeenCalledWith(
         "https://bucket.s3.amazonaws.com/data.bin",
-        { method: "GET" },
-      );
-
-      // fetch uses the transformed URL
-      expect(fetchSpy).toHaveBeenCalledWith(
-        "https://proxy.example.com/data.bin?signed=abc123",
-        expect.anything(),
-      );
-
-      fetchSpy.mockRestore();
-    });
-
-    it("should work with async transformRequest", async () => {
-      const mockData = new Uint8Array(10);
-      const mockResponse = {
-        ok: true,
-        status: 206,
-        arrayBuffer: vi.fn().mockResolvedValue(mockData.buffer),
-      };
-      const fetchSpy = vi
-        .spyOn(globalThis, "fetch")
-        .mockResolvedValue(mockResponse as any);
-
-      const session = createMockSession({ nodes: [] }) as any;
-
-      const transformRequest = vi.fn().mockResolvedValue({
-        url: "https://signed.example.com/data.bin",
-        headers: { "X-Signed": "yes" },
-      });
-
-      const payload = {
-        type: "virtual" as const,
-        location: "https://example.com/data.bin",
-        offset: 0,
-        length: 10,
-        checksumEtag: null,
-        checksumLastModified: 0,
-      };
-
-      await session.fetchChunkPayload(payload, { transformRequest });
-
-      expect(fetchSpy).toHaveBeenCalledWith(
-        "https://signed.example.com/data.bin",
         {
-          headers: {
-            Range: "bytes=0-9",
-            "X-Signed": "yes",
-          },
+          headers: { Range: "bytes=0-9" },
           signal: undefined,
         },
       );
 
-      fetchSpy.mockRestore();
+      // globalThis.fetch should NOT be called
+      expect(globalFetchSpy).not.toHaveBeenCalled();
+
+      globalFetchSpy.mockRestore();
     });
 
-    it("should ignore method override from transformRequest (HEAD would corrupt data)", async () => {
+    it("should pass translated URL and all headers to fetchClient", async () => {
       const mockData = new Uint8Array(10);
       const mockResponse = {
         ok: true,
         status: 206,
         arrayBuffer: vi.fn().mockResolvedValue(mockData.buffer),
       };
-      const fetchSpy = vi
-        .spyOn(globalThis, "fetch")
-        .mockResolvedValue(mockResponse as any);
+
+      const fetchClient = {
+        fetch: vi.fn().mockResolvedValue(mockResponse as any),
+      };
 
       const session = createMockSession({ nodes: [] }) as any;
-
-      // Even if callback returns method: 'HEAD', it should be ignored
-      // because HEAD responses have no body and would corrupt chunk reads
-      const transformRequest = vi.fn().mockReturnValue({
-        url: "https://example.com/data.bin",
-        method: "HEAD", // This should be ignored
-      });
 
       const payload = {
         type: "virtual" as const,
         location: "https://example.com/data.bin",
-        offset: 0,
+        offset: 50,
         length: 10,
-        checksumEtag: null,
-        checksumLastModified: 0,
+        checksumEtag: '"abc123"',
+        checksumLastModified: 1700000000,
       };
 
-      await session.fetchChunkPayload(payload, { transformRequest });
+      await session.fetchChunkPayload(payload, { fetchClient });
 
-      // method should NOT be set (defaults to GET)
-      expect(fetchSpy).toHaveBeenCalledWith("https://example.com/data.bin", {
-        headers: { Range: "bytes=0-9" },
-        signal: undefined,
-      });
-
-      fetchSpy.mockRestore();
-    });
-
-    it("should merge other RequestInit options from transformRequest", async () => {
-      const mockData = new Uint8Array(10);
-      const mockResponse = {
-        ok: true,
-        status: 206,
-        arrayBuffer: vi.fn().mockResolvedValue(mockData.buffer),
-      };
-      const fetchSpy = vi
-        .spyOn(globalThis, "fetch")
-        .mockResolvedValue(mockResponse as any);
-
-      const session = createMockSession({ nodes: [] }) as any;
-
-      const transformRequest = vi.fn().mockReturnValue({
-        url: "https://example.com/data.bin",
-        credentials: "include",
-        mode: "cors",
-      });
-
-      const payload = {
-        type: "virtual" as const,
-        location: "https://example.com/data.bin",
-        offset: 0,
-        length: 10,
-        checksumEtag: null,
-        checksumLastModified: 0,
-      };
-
-      await session.fetchChunkPayload(payload, { transformRequest });
-
-      expect(fetchSpy).toHaveBeenCalledWith("https://example.com/data.bin", {
-        headers: { Range: "bytes=0-9" },
-        signal: undefined,
-        credentials: "include",
-        mode: "cors",
-      });
-
-      fetchSpy.mockRestore();
+      expect(fetchClient.fetch).toHaveBeenCalledWith(
+        "https://example.com/data.bin",
+        {
+          headers: {
+            Range: "bytes=50-59",
+            "If-None-Match": '"abc123"',
+            "If-Modified-Since": expect.any(String),
+          },
+          signal: undefined,
+        },
+      );
     });
 
     it("should throw on failed virtual chunk fetch", async () => {

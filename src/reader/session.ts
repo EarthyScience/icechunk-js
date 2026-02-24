@@ -443,7 +443,7 @@ export class ReadSession {
       case "virtual": {
         // Virtual chunks reference external URLs
         // Translate cloud storage URLs to HTTPS endpoints
-        let httpUrl = translateToHttpUrl(payload.location);
+        const httpUrl = translateToHttpUrl(payload.location);
         const headers: Record<string, string> = {
           Range: `bytes=${payload.offset}-${payload.offset + payload.length - 1}`,
         };
@@ -458,31 +458,17 @@ export class ReadSession {
           ).toUTCString();
         }
 
-        let fetchInit: RequestInit = {
+        const fetchInit: RequestInit = {
           headers,
           signal: options?.signal,
         };
 
-        // If transformRequest provided, let it override URL and add options
-        if (options?.transformRequest) {
-          const result = await options.transformRequest(httpUrl, {
-            method: "GET",
-          });
-          httpUrl = result.url;
-          if (result.headers) {
-            fetchInit.headers = { ...fetchInit.headers, ...result.headers };
-          }
-          // Note: method override is intentionally ignored for virtual chunk fetches.
-          // HEAD requests would return empty body, silently corrupting chunk data.
-          // The method in TransformRequestOptions is informational only (for signed URL generation).
-          // Merge other RequestInit options (excluding url, headers, method)
-          const { url: _, headers: __, method: ___, ...rest } = result;
-          fetchInit = { ...fetchInit, ...rest };
-        }
-
         let response: Response;
         try {
-          response = await fetch(httpUrl, fetchInit);
+          const client = options?.fetchClient;
+          response = client
+            ? await client.fetch(httpUrl, fetchInit)
+            : await fetch(httpUrl, fetchInit);
         } catch (error) {
           // Translate abort errors to our class (handles DOMException and other implementations)
           if (error instanceof Error && error.name === "AbortError") {
@@ -578,7 +564,7 @@ export class ReadSession {
         const absoluteStart = payload.offset + rangeStart;
         const absoluteEnd = payload.offset + rangeEnd;
 
-        let httpUrl = translateToHttpUrl(payload.location);
+        const httpUrl = translateToHttpUrl(payload.location);
         const headers: Record<string, string> = {
           Range: `bytes=${absoluteStart}-${absoluteEnd - 1}`,
         };
@@ -593,26 +579,17 @@ export class ReadSession {
           ).toUTCString();
         }
 
-        let fetchInit: RequestInit = {
+        const fetchInit: RequestInit = {
           headers,
           signal: options?.signal,
         };
 
-        if (options?.transformRequest) {
-          const result = await options.transformRequest(httpUrl, {
-            method: "GET",
-          });
-          httpUrl = result.url;
-          if (result.headers) {
-            fetchInit.headers = { ...fetchInit.headers, ...result.headers };
-          }
-          const { url: _, headers: __, method: ___, ...rest } = result;
-          fetchInit = { ...fetchInit, ...rest };
-        }
-
         let response: Response;
         try {
-          response = await fetch(httpUrl, fetchInit);
+          const client = options?.fetchClient;
+          response = client
+            ? await client.fetch(httpUrl, fetchInit)
+            : await fetch(httpUrl, fetchInit);
         } catch (error) {
           if (error instanceof Error && error.name === "AbortError") {
             throw new AbortError();
