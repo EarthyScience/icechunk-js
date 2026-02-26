@@ -64,6 +64,21 @@ export interface IcechunkStoreOptions {
 
   /** Maximum number of manifests to cache in the LRU cache (default: 100) */
   maxManifestCacheSize?: number;
+
+  /**
+   * Send If-Match / If-Unmodified-Since headers on virtual chunk requests.
+   *
+   * Defaults to false because these headers trigger CORS preflight in browsers.
+   */
+  validateChecksums?: boolean;
+
+  /**
+   * Azure storage account name for translating az:// and azure:// URLs.
+   *
+   * Required when virtual chunks reference az:// or azure:// URLs.
+   * Not needed for abfs:// URLs which embed the account in the host.
+   */
+  azureAccount?: string;
 }
 
 /**
@@ -86,9 +101,16 @@ export class IcechunkStore implements AsyncReadable {
   /** The underlying read session. Exposed for advanced usage. */
   readonly session: ReadSession;
   private fetchClient?: FetchClient;
+  private validateChecksums: boolean;
+  private azureAccount?: string;
   private basePath: string = "";
 
-  private constructor(session: ReadSession, fetchClient?: FetchClient) {
+  private constructor(
+    session: ReadSession,
+    fetchClient?: FetchClient,
+    validateChecksums?: boolean,
+    azureAccount?: string,
+  ) {
     if (!(session instanceof ReadSession)) {
       throw new Error(
         "IcechunkStore constructor is private. Use IcechunkStore.open() instead.",
@@ -96,6 +118,8 @@ export class IcechunkStore implements AsyncReadable {
     }
     this.session = session;
     this.fetchClient = fetchClient;
+    this.validateChecksums = validateChecksums ?? false;
+    this.azureAccount = azureAccount;
   }
 
   /**
@@ -136,7 +160,12 @@ export class IcechunkStore implements AsyncReadable {
     options: IcechunkStoreOptions = {},
   ): Promise<IcechunkStore> {
     if (arg instanceof ReadSession) {
-      return new IcechunkStore(arg, options.fetchClient);
+      return new IcechunkStore(
+        arg,
+        options.fetchClient,
+        options.validateChecksums,
+        options.azureAccount,
+      );
     }
 
     const storage = typeof arg === "string" ? new HttpStorage(arg) : arg;
@@ -166,7 +195,12 @@ export class IcechunkStore implements AsyncReadable {
       );
     }
 
-    return new IcechunkStore(session, options.fetchClient);
+    return new IcechunkStore(
+      session,
+      options.fetchClient,
+      options.validateChecksums,
+      options.azureAccount,
+    );
   }
 
   /**
@@ -199,6 +233,8 @@ export class IcechunkStore implements AsyncReadable {
       const chunk = await this.session.getChunk(resolvedPath, parsed.coords, {
         signal: opts?.signal,
         ...(this.fetchClient && { fetchClient: this.fetchClient }),
+        validateChecksums: this.validateChecksums,
+        azureAccount: this.azureAccount,
       });
       return chunk ?? undefined;
     } catch {
@@ -238,6 +274,8 @@ export class IcechunkStore implements AsyncReadable {
           {
             signal: opts?.signal,
             ...(this.fetchClient && { fetchClient: this.fetchClient }),
+            validateChecksums: this.validateChecksums,
+            azureAccount: this.azureAccount,
           },
         );
         return data ?? undefined;
@@ -275,7 +313,12 @@ export class IcechunkStore implements AsyncReadable {
    * @returns A new IcechunkStore scoped to the subpath
    */
   resolve(path: string): IcechunkStore {
-    const scoped = new IcechunkStore(this.session, this.fetchClient);
+    const scoped = new IcechunkStore(
+      this.session,
+      this.fetchClient,
+      this.validateChecksums,
+      this.azureAccount,
+    );
     const cleanPath = path.replace(/^\/+|\/+$/g, "");
     scoped.basePath = this.basePath
       ? `${this.basePath}/${cleanPath}`

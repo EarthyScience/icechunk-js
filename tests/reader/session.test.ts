@@ -463,7 +463,7 @@ describe("ReadSession", () => {
       globalFetchSpy.mockRestore();
     });
 
-    it("should pass translated URL and all headers to fetchClient", async () => {
+    it("should not send checksum headers by default", async () => {
       const mockData = new Uint8Array(10);
       const mockResponse = {
         ok: true,
@@ -487,6 +487,45 @@ describe("ReadSession", () => {
       };
 
       await session.fetchChunkPayload(payload, { fetchClient });
+
+      expect(fetchClient.fetch).toHaveBeenCalledWith(
+        "https://example.com/data.bin",
+        {
+          headers: {
+            Range: "bytes=50-59",
+          },
+          signal: undefined,
+        },
+      );
+    });
+
+    it("should send checksum headers when validateChecksums is true", async () => {
+      const mockData = new Uint8Array(10);
+      const mockResponse = {
+        ok: true,
+        status: 206,
+        arrayBuffer: vi.fn().mockResolvedValue(mockData.buffer),
+      };
+
+      const fetchClient = {
+        fetch: vi.fn().mockResolvedValue(mockResponse as any),
+      };
+
+      const session = createMockSession({ nodes: [] }) as any;
+
+      const payload = {
+        type: "virtual" as const,
+        location: "https://example.com/data.bin",
+        offset: 50,
+        length: 10,
+        checksumEtag: '"abc123"',
+        checksumLastModified: 1700000000,
+      };
+
+      await session.fetchChunkPayload(payload, {
+        fetchClient,
+        validateChecksums: true,
+      });
 
       expect(fetchClient.fetch).toHaveBeenCalledWith(
         "https://example.com/data.bin",
@@ -681,6 +720,57 @@ describe("ReadSession", () => {
       );
 
       fetchSpy.mockRestore();
+    });
+
+    it("should translate az:// URLs using azureAccount option", async () => {
+      const mockData = new Uint8Array(5);
+      const mockResponse = {
+        ok: true,
+        status: 206,
+        arrayBuffer: vi.fn().mockResolvedValue(mockData.buffer),
+      };
+
+      const fetchClient = {
+        fetch: vi.fn().mockResolvedValue(mockResponse as any),
+      };
+
+      const session = createMockSession({ nodes: [] }) as any;
+
+      const payload = {
+        type: "virtual" as const,
+        location: "az://mycontainer/prefix/data.bin",
+        offset: 0,
+        length: 5,
+        checksumEtag: null,
+        checksumLastModified: 0,
+      };
+
+      await session.fetchChunkPayload(payload, {
+        fetchClient,
+        azureAccount: "myaccount",
+      });
+
+      expect(fetchClient.fetch).toHaveBeenCalledWith(
+        "https://myaccount.blob.core.windows.net/mycontainer/prefix/data.bin",
+        expect.any(Object),
+      );
+    });
+
+    it("should throw when az:// URL is used without azureAccount", async () => {
+      const session = createMockSession({ nodes: [] }) as any;
+
+      const payload = {
+        type: "virtual" as const,
+        location: "az://mycontainer/data.bin",
+        offset: 0,
+        length: 5,
+        checksumEtag: null,
+        checksumLastModified: 0,
+      };
+
+      await expect(session.fetchChunkPayload(payload)).rejects.toThrow(
+        "azureAccount option is required",
+      );
     });
   });
 

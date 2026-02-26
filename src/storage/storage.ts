@@ -20,7 +20,7 @@ export interface ByteRange {
  * - Route through a proxy
  *
  * icechunk-js handles URL translation (s3:// → https://) and builds
- * all headers (Range, If-None-Match, etc.) before calling fetch().
+ * all headers (Range, If-Match, etc.) before calling fetch().
  * The client only needs to execute the HTTP request.
  */
 export interface FetchClient {
@@ -40,6 +40,27 @@ export interface RequestOptions {
   signal?: AbortSignal;
   /** Pluggable HTTP client for virtual chunk fetching */
   fetchClient?: FetchClient;
+  /**
+   * Send If-Match / If-Unmodified-Since headers on virtual chunk requests.
+   *
+   * When true, the storage server will return 412 Precondition Failed if
+   * the underlying file has changed since the snapshot recorded its checksum.
+   *
+   * Defaults to false because these headers trigger CORS preflight requests
+   * in browsers, and most storage servers don't whitelist them by default.
+   */
+  validateChecksums?: boolean;
+  /**
+   * Azure storage account name for translating az:// and azure:// URLs.
+   *
+   * Required when virtual chunks reference az:// or azure:// URLs, since
+   * these schemes encode only the container name (e.g., az://container/path).
+   * The account is needed to build the HTTPS endpoint:
+   * https://{account}.blob.core.windows.net/{container}/{path}
+   *
+   * Not needed for abfs:// URLs, which embed the account in the host.
+   */
+  azureAccount?: string;
 }
 
 /** Error thrown when an object is not found */

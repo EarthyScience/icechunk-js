@@ -443,19 +443,25 @@ export class ReadSession {
       case "virtual": {
         // Virtual chunks reference external URLs
         // Translate cloud storage URLs to HTTPS endpoints
-        const httpUrl = translateToHttpUrl(payload.location);
+        const httpUrl = translateToHttpUrl(
+          payload.location,
+          options?.azureAccount,
+        );
         const headers: Record<string, string> = {
           Range: `bytes=${payload.offset}-${payload.offset + payload.length - 1}`,
         };
 
-        // Add conditional request headers for integrity validation
-        if (payload.checksumEtag) {
-          headers["If-Match"] = payload.checksumEtag;
-        }
-        if (payload.checksumLastModified > 0) {
-          headers["If-Unmodified-Since"] = new Date(
-            payload.checksumLastModified * 1000,
-          ).toUTCString();
+        // Add conditional request headers for integrity validation (opt-in
+        // because these trigger CORS preflight in browsers)
+        if (options?.validateChecksums) {
+          if (payload.checksumEtag) {
+            headers["If-Match"] = payload.checksumEtag;
+          }
+          if (payload.checksumLastModified > 0) {
+            headers["If-Unmodified-Since"] = new Date(
+              payload.checksumLastModified * 1000,
+            ).toUTCString();
+          }
         }
 
         const fetchInit: RequestInit = {
@@ -564,19 +570,25 @@ export class ReadSession {
         const absoluteStart = payload.offset + rangeStart;
         const absoluteEnd = payload.offset + rangeEnd;
 
-        const httpUrl = translateToHttpUrl(payload.location);
+        const httpUrl = translateToHttpUrl(
+          payload.location,
+          options?.azureAccount,
+        );
         const headers: Record<string, string> = {
           Range: `bytes=${absoluteStart}-${absoluteEnd - 1}`,
         };
 
-        // Add conditional request headers for integrity validation
-        if (payload.checksumEtag) {
-          headers["If-Match"] = payload.checksumEtag;
-        }
-        if (payload.checksumLastModified > 0) {
-          headers["If-Unmodified-Since"] = new Date(
-            payload.checksumLastModified * 1000,
-          ).toUTCString();
+        // Add conditional request headers for integrity validation (opt-in
+        // because these trigger CORS preflight in browsers)
+        if (options?.validateChecksums) {
+          if (payload.checksumEtag) {
+            headers["If-Match"] = payload.checksumEtag;
+          }
+          if (payload.checksumLastModified > 0) {
+            headers["If-Unmodified-Since"] = new Date(
+              payload.checksumLastModified * 1000,
+            ).toUTCString();
+          }
         }
 
         const fetchInit: RequestInit = {
@@ -687,15 +699,19 @@ function compareUtf8Bytes(a: string, b: string): number {
  * Supports:
  * - s3://bucket/key → https://bucket.s3.amazonaws.com/key (or path-style for dotted buckets)
  * - gs://bucket/key or gcs://bucket/key → https://storage.googleapis.com/bucket/key
- * - az://account/container/path or azure://account/container/path → https://account.blob.core.windows.net/container/path
+ * - az://container/path or azure://container/path → https://{azureAccount}.blob.core.windows.net/container/path
  * - abfs://container@account.dfs.core.windows.net/path → https://account.blob.core.windows.net/container/path
  * - http(s):// URLs pass through unchanged
+ *
+ * Azure az:// and azure:// URLs follow the Rust convention where the host is
+ * the container name (not the account). The account must be supplied separately
+ * via the azureAccount parameter.
  *
  * Note: S3 URLs use virtual-hosted style for simple bucket names, but fall back to
  * path-style for buckets containing dots (which break SSL certificate validation).
  * For buckets in specific regions, S3 will redirect to the correct endpoint.
  */
-function translateToHttpUrl(url: string): string {
+function translateToHttpUrl(url: string, azureAccount?: string): string {
   // S3: s3://bucket/key → https://bucket.s3.amazonaws.com/key
   // For buckets with dots, use path-style: https://s3.amazonaws.com/bucket/key
   if (url.startsWith("s3://")) {
@@ -725,18 +741,27 @@ function translateToHttpUrl(url: string): string {
     return `https://storage.googleapis.com/${rest}`;
   }
 
-  // Azure: az://account/container/path or azure://account/container/path
-  // → https://account.blob.core.windows.net/container/path
+  // Azure: az://container/path or azure://container/path
+  // → https://{azureAccount}.blob.core.windows.net/container/path
+  // Matches Rust convention: container is in the host position, account from config.
   if (url.startsWith("az://") || url.startsWith("azure://")) {
+    if (!azureAccount) {
+      throw new Error(
+        `Cannot translate Azure URL "${url}": azureAccount option is required. ` +
+          `az:// and azure:// URLs encode only the container name; ` +
+          `pass azureAccount in store options to supply the storage account.`,
+      );
+    }
     const prefixLen = url.startsWith("az://") ? 5 : 8;
     const rest = url.slice(prefixLen);
     const firstSlash = rest.indexOf("/");
     if (firstSlash === -1) {
-      return `https://${rest}.blob.core.windows.net/`;
+      // Just container, no path
+      return `https://${azureAccount}.blob.core.windows.net/${rest}`;
     }
-    const account = rest.slice(0, firstSlash);
-    const containerAndPath = rest.slice(firstSlash + 1);
-    return `https://${account}.blob.core.windows.net/${containerAndPath}`;
+    const container = rest.slice(0, firstSlash);
+    const path = rest.slice(firstSlash + 1);
+    return `https://${azureAccount}.blob.core.windows.net/${container}/${path}`;
   }
 
   // ABFS: abfs://container@account.dfs.core.windows.net/path
