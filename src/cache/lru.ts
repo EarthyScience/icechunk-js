@@ -22,6 +22,7 @@ export class LRUCache<K, V> {
   }
 
   set(key: K, value: V): void {
+    if (this.maxSize <= 0) return;
     // If key exists, delete it first to update position
     if (this.cache.has(key)) {
       this.cache.delete(key);

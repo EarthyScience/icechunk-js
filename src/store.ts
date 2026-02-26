@@ -294,6 +294,11 @@ export class IcechunkStore implements AsyncReadable {
     let path: string;
     if (parentPath == null) {
       path = this.basePath ? `/${this.basePath}` : "/";
+    } else if (this.basePath) {
+      path = `/${this.basePath}/${parentPath.replace(/^\//, "")}`.replace(
+        /\/+/g,
+        "/",
+      );
     } else {
       // Normalize: ensure leading slash for session API
       path = parentPath.startsWith("/") ? parentPath : `/${parentPath}`;
@@ -322,9 +327,11 @@ export class IcechunkStore implements AsyncReadable {
    * @returns NodeSnapshot or null if not found
    */
   getNode(path: string): NodeSnapshot | null {
-    const fullPath = this.basePath
-      ? `/${this.basePath}/${path.replace(/^\//, "")}`.replace(/\/+/g, "/")
-      : path;
+    const fullPath = (
+      this.basePath
+        ? `/${this.basePath}/${path.replace(/^\//, "")}`.replace(/\/+/g, "/")
+        : path
+    ).replace(/\/+$/, "") || "/";
     return this.session.getNode(fullPath);
   }
 
@@ -335,9 +342,11 @@ export class IcechunkStore implements AsyncReadable {
    * @returns Parsed JSON metadata or null if node not found
    */
   getMetadata(path: string): unknown | null {
-    const fullPath = this.basePath
-      ? `/${this.basePath}/${path.replace(/^\//, "")}`.replace(/\/+/g, "/")
-      : path;
+    const fullPath = (
+      this.basePath
+        ? `/${this.basePath}/${path.replace(/^\//, "")}`.replace(/\/+/g, "/")
+        : path
+    ).replace(/\/+$/, "") || "/";
     return this.session.getMetadata(fullPath);
   }
 }

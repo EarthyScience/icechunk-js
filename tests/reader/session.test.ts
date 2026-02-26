@@ -493,8 +493,8 @@ describe("ReadSession", () => {
         {
           headers: {
             Range: "bytes=50-59",
-            "If-None-Match": '"abc123"',
-            "If-Modified-Since": expect.any(String),
+            "If-Match": '"abc123"',
+            "If-Unmodified-Since": expect.any(String),
           },
           signal: undefined,
         },

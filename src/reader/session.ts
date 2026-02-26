@@ -450,10 +450,10 @@ export class ReadSession {
 
         // Add conditional request headers for integrity validation
         if (payload.checksumEtag) {
-          headers["If-None-Match"] = payload.checksumEtag;
+          headers["If-Match"] = payload.checksumEtag;
         }
         if (payload.checksumLastModified > 0) {
-          headers["If-Modified-Since"] = new Date(
+          headers["If-Unmodified-Since"] = new Date(
             payload.checksumLastModified * 1000,
           ).toUTCString();
         }
@@ -477,9 +477,9 @@ export class ReadSession {
           throw error;
         }
 
-        if (response.status === 304) {
+        if (response.status === 412) {
           throw new Error(
-            `Virtual chunk at ${httpUrl} returned 304 Not Modified — no local cache available to serve stale data`,
+            `Virtual chunk at ${httpUrl} failed integrity check — data has been modified since snapshot was created`,
           );
         }
 
@@ -571,10 +571,10 @@ export class ReadSession {
 
         // Add conditional request headers for integrity validation
         if (payload.checksumEtag) {
-          headers["If-None-Match"] = payload.checksumEtag;
+          headers["If-Match"] = payload.checksumEtag;
         }
         if (payload.checksumLastModified > 0) {
-          headers["If-Modified-Since"] = new Date(
+          headers["If-Unmodified-Since"] = new Date(
             payload.checksumLastModified * 1000,
           ).toUTCString();
         }
@@ -597,9 +597,9 @@ export class ReadSession {
           throw error;
         }
 
-        if (response.status === 304) {
+        if (response.status === 412) {
           throw new Error(
-            `Virtual chunk at ${httpUrl} returned 304 Not Modified — no local cache available to serve stale data`,
+            `Virtual chunk at ${httpUrl} failed integrity check — data has been modified since snapshot was created`,
           );
         }
 
