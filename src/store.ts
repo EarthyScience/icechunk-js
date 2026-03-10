@@ -339,10 +339,9 @@ export class IcechunkStore implements AsyncReadable {
       path = this.basePath ? `/${this.basePath}` : "/";
     } else if (this.basePath) {
       path =
-        `/${this.basePath}/${parentPath.replace(/^\//, "")}`.replace(
-          /\/+/g,
-          "/",
-        ).replace(/\/+$/, "") || "/";
+        `/${this.basePath}/${parentPath.replace(/^\//, "")}`
+          .replace(/\/+/g, "/")
+          .replace(/\/+$/, "") || "/";
     } else {
       // Normalize: ensure leading slash, strip trailing slashes
       path =

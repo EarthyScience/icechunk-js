@@ -301,7 +301,9 @@ describe("IcechunkStore", () => {
       });
       // Manually set basePath and session methods to simulate resolve("group")
       (store as unknown as { basePath: string }).basePath = "group";
-      (store.session as unknown as { listChildren: typeof listChildrenSpy }).listChildren = listChildrenSpy;
+      (
+        store.session as unknown as { listChildren: typeof listChildrenSpy }
+      ).listChildren = listChildrenSpy;
 
       store.listChildren("/");
 
@@ -316,7 +318,9 @@ describe("IcechunkStore", () => {
         getChunk: vi.fn(),
       });
       (store as unknown as { basePath: string }).basePath = "group";
-      (store.session as unknown as { listChildren: typeof listChildrenSpy }).listChildren = listChildrenSpy;
+      (
+        store.session as unknown as { listChildren: typeof listChildrenSpy }
+      ).listChildren = listChildrenSpy;
 
       store.listChildren("sub/");
 
@@ -330,7 +334,9 @@ describe("IcechunkStore", () => {
         getChunk: vi.fn(),
       });
       (store as unknown as { basePath: string }).basePath = "";
-      (store.session as unknown as { listChildren: typeof listChildrenSpy }).listChildren = listChildrenSpy;
+      (
+        store.session as unknown as { listChildren: typeof listChildrenSpy }
+      ).listChildren = listChildrenSpy;
 
       store.listChildren("/group/");
 
@@ -344,7 +350,9 @@ describe("IcechunkStore", () => {
         getChunk: vi.fn(),
       });
       (store as unknown as { basePath: string }).basePath = "";
-      (store.session as unknown as { listChildren: typeof listChildrenSpy }).listChildren = listChildrenSpy;
+      (
+        store.session as unknown as { listChildren: typeof listChildrenSpy }
+      ).listChildren = listChildrenSpy;
 
       store.listChildren("/");
 
