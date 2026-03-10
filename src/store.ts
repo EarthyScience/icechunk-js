@@ -338,13 +338,18 @@ export class IcechunkStore implements AsyncReadable {
     if (parentPath == null) {
       path = this.basePath ? `/${this.basePath}` : "/";
     } else if (this.basePath) {
-      path = `/${this.basePath}/${parentPath.replace(/^\//, "")}`.replace(
-        /\/+/g,
-        "/",
-      );
+      path =
+        `/${this.basePath}/${parentPath.replace(/^\//, "")}`.replace(
+          /\/+/g,
+          "/",
+        ).replace(/\/+$/, "") || "/";
     } else {
-      // Normalize: ensure leading slash for session API
-      path = parentPath.startsWith("/") ? parentPath : `/${parentPath}`;
+      // Normalize: ensure leading slash, strip trailing slashes
+      path =
+        (parentPath.startsWith("/") ? parentPath : `/${parentPath}`).replace(
+          /\/+$/,
+          "",
+        ) || "/";
     }
     const nodes = this.session.listChildren(path);
     return nodes.map((node) => {

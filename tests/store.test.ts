@@ -292,6 +292,66 @@ describe("IcechunkStore", () => {
     });
   });
 
+  describe("listChildren trailing-slash normalization", () => {
+    it("should strip trailing slash when basePath is set and parentPath is '/'", () => {
+      const listChildrenSpy = vi.fn().mockReturnValue([]);
+      const store = createStoreWithMockSession({
+        getRawMetadata: vi.fn(),
+        getChunk: vi.fn(),
+      });
+      // Manually set basePath and session methods to simulate resolve("group")
+      (store as unknown as { basePath: string }).basePath = "group";
+      (store.session as unknown as { listChildren: typeof listChildrenSpy }).listChildren = listChildrenSpy;
+
+      store.listChildren("/");
+
+      // Should be "/group", NOT "/group/"
+      expect(listChildrenSpy).toHaveBeenCalledWith("/group");
+    });
+
+    it("should strip trailing slash when parentPath has trailing slash", () => {
+      const listChildrenSpy = vi.fn().mockReturnValue([]);
+      const store = createStoreWithMockSession({
+        getRawMetadata: vi.fn(),
+        getChunk: vi.fn(),
+      });
+      (store as unknown as { basePath: string }).basePath = "group";
+      (store.session as unknown as { listChildren: typeof listChildrenSpy }).listChildren = listChildrenSpy;
+
+      store.listChildren("sub/");
+
+      expect(listChildrenSpy).toHaveBeenCalledWith("/group/sub");
+    });
+
+    it("should strip trailing slash without basePath", () => {
+      const listChildrenSpy = vi.fn().mockReturnValue([]);
+      const store = createStoreWithMockSession({
+        getRawMetadata: vi.fn(),
+        getChunk: vi.fn(),
+      });
+      (store as unknown as { basePath: string }).basePath = "";
+      (store.session as unknown as { listChildren: typeof listChildrenSpy }).listChildren = listChildrenSpy;
+
+      store.listChildren("/group/");
+
+      expect(listChildrenSpy).toHaveBeenCalledWith("/group");
+    });
+
+    it("should preserve root path '/' when parentPath is '/' and no basePath", () => {
+      const listChildrenSpy = vi.fn().mockReturnValue([]);
+      const store = createStoreWithMockSession({
+        getRawMetadata: vi.fn(),
+        getChunk: vi.fn(),
+      });
+      (store as unknown as { basePath: string }).basePath = "";
+      (store.session as unknown as { listChildren: typeof listChildrenSpy }).listChildren = listChildrenSpy;
+
+      store.listChildren("/");
+
+      expect(listChildrenSpy).toHaveBeenCalledWith("/");
+    });
+  });
+
   describe("abort signal handling", () => {
     it("should return undefined when signal is already aborted", async () => {
       const getChunkSpy = vi.fn();
