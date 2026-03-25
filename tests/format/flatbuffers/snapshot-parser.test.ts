@@ -1,7 +1,7 @@
 /**
  * Tests for snapshot FlatBuffer parsing against real test data.
  *
- * Reads actual snapshot files from icechunk-python/tests/data/test-repo-v2
+ * Reads actual snapshot files from tests/data/test-repo-v2
  * to verify parsing produces valid results — especially for ManifestFileInfo
  * structs which require correct alignment-aware byte offsets.
  */
@@ -24,7 +24,7 @@ import { encodeObjectId12 } from "../../../src/format/object-id.js";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const TEST_DATA_PATH = join(
   __dirname,
-  "../../../../icechunk-python/tests/data",
+  "../../data",
 );
 const TEST_REPO_V2_PATH = join(TEST_DATA_PATH, "test-repo-v2");
 

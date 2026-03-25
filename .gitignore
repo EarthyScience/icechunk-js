@@ -21,6 +21,10 @@ npm-debug.log*
 # Coverage
 coverage/
 
+# Synced from upstream (fetched via scripts/sync-*.sh)
+tests/data/
+/flatbuffers/
+
 # TypeScript cache
 *.tsbuildinfo
 

@@ -1,7 +1,7 @@
 /**
  * Integration tests with zarrita library.
  *
- * Uses test-repo-v1 and test-repo-v2 from icechunk-python/tests/data which contain:
+ * Uses test-repo-v1 and test-repo-v2 from tests/data which contain:
  * - group1/big_chunks: 2D float32 array, shape=(10,10), chunks=(5,5), filled with 42.0
  * - group1/small_chunks: 1D int8 array, shape=(5,), chunks=(1,), filled with 84
  * - group2/group3/group4/group5/inner: 2D float32 array (only on my-branch)

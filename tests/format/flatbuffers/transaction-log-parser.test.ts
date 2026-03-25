@@ -1,7 +1,7 @@
 /**
  * Tests for transaction log FlatBuffer parsing against real test data.
  *
- * Reads actual transaction log files from icechunk-python/tests/data/test-repo-v2
+ * Reads actual transaction log files from tests/data/test-repo-v2
  * to verify parsing produces valid results.
  */
 
@@ -20,7 +20,7 @@ import {
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const TEST_REPO_V2_PATH = join(
   __dirname,
-  "../../../../icechunk-python/tests/data/test-repo-v2",
+  "../../data/test-repo-v2",
 );
 
 /** Read and parse a transaction log file (header + optional zstd + FlatBuffer) */

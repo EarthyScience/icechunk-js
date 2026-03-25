@@ -1,15 +1,14 @@
 {
-  "name": "@carbonplan/icechunk-js",
+  "name": "icechunk-js",
   "version": "0.2.3",
   "description": "Read-only JavaScript/TypeScript reader for Icechunk repositories",
   "repository": {
     "type": "git",
-    "url": "https://github.com/carbonplan/icechunk.git",
-    "directory": "icechunk-js"
+    "url": "https://github.com/carbonplan/icechunk-js.git"
   },
-  "homepage": "https://github.com/carbonplan/icechunk/tree/main/icechunk-js",
+  "homepage": "https://github.com/carbonplan/icechunk-js",
   "bugs": {
-    "url": "https://github.com/carbonplan/icechunk/issues"
+    "url": "https://github.com/carbonplan/icechunk-js/issues"
   },
   "publishConfig": {
     "access": "public"
@@ -34,13 +33,17 @@
     "dev": "tsup --watch",
     "clean": "rm -rf dist",
     "typecheck": "tsc --noEmit",
+    "pretest": "test -d tests/data || ./scripts/sync-fixtures.sh",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "generate:fbs": "flatc -T -o ./src/format/flatbuffers --gen-all ../icechunk/flatbuffers/all.fbs && node scripts/postgen-fbs.cjs ./src/format/flatbuffers && prettier --write src/format/flatbuffers/generated",
-    "check:fbs": "flatc -T -o /tmp/fbs-check --gen-all ../icechunk/flatbuffers/all.fbs && node scripts/postgen-fbs.cjs /tmp/fbs-check && prettier --write /tmp/fbs-check/generated && diff -r /tmp/fbs-check/generated src/format/flatbuffers/generated"
+    "prepare": "test -d tests/data || ./scripts/sync-fixtures.sh && test -d flatbuffers || ./scripts/sync-flatbuffers.sh",
+    "sync:fixtures": "./scripts/sync-fixtures.sh",
+    "sync:fbs": "./scripts/sync-flatbuffers.sh",
+    "generate:fbs": "flatc -T -o ./src/format/flatbuffers --gen-all ./flatbuffers/all.fbs && node scripts/postgen-fbs.cjs ./src/format/flatbuffers && prettier --write src/format/flatbuffers/generated",
+    "check:fbs": "flatc -T -o /tmp/fbs-check --gen-all ./flatbuffers/all.fbs && node scripts/postgen-fbs.cjs /tmp/fbs-check && prettier --write /tmp/fbs-check/generated && diff -r /tmp/fbs-check/generated src/format/flatbuffers/generated"
   },
   "keywords": [
     "icechunk",

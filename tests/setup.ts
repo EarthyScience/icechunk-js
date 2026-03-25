@@ -41,10 +41,9 @@ async function waitForServer(): Promise<void> {
  * Global setup - runs once before all tests.
  */
 export default async function setup(): Promise<() => Promise<void>> {
-  // Start fixture server - serve from Python test data directory
+  // Start fixture server - serve from synced test data directory
   const serverPath = resolve(__dirname, "fixtures/serve.ts");
-  // Use the test data from the Python package (checked into git for backwards compatibility)
-  const fixturesDir = resolve(__dirname, "../../icechunk-python/tests/data");
+  const fixturesDir = resolve(__dirname, "data");
 
   fixtureServer = spawn(
     "npx",

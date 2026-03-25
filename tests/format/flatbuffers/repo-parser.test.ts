@@ -14,10 +14,10 @@ import { encodeObjectId12 } from "../../../src/format/object-id.js";
 // ESM equivalent of __dirname
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// Path to v2 test repository in the Python package
+// Path to v2 test repository
 const TEST_REPO_V2_PATH = join(
   __dirname,
-  "../../../../icechunk-python/tests/data/test-repo-v2",
+  "../../data/test-repo-v2",
 );
 
 describe("repo-parser", () => {
