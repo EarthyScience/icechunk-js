@@ -3,6 +3,7 @@
 import * as flatbuffers from "flatbuffers";
 
 import { ManifestFileInfo } from "../generated/manifest-file-info.js";
+import { ManifestFileInfoV2 } from "../generated/manifest-file-info-v2.js";
 import { MetadataItem } from "../generated/metadata-item.js";
 import { NodeSnapshot } from "../generated/node-snapshot.js";
 import { ObjectId12 } from "../generated/object-id12.js";
@@ -104,5 +105,48 @@ export class Snapshot {
   manifestFilesLength(): number {
     const offset = this.bb!.__offset(this.bb_pos, 16);
     return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+  }
+
+  manifestFilesV2(
+    index: number,
+    obj?: ManifestFileInfoV2,
+  ): ManifestFileInfoV2 | null {
+    const offset = this.bb!.__offset(this.bb_pos, 18);
+    return offset
+      ? (obj || new ManifestFileInfoV2()).__init(
+          this.bb!.__indirect(
+            this.bb!.__vector(this.bb_pos + offset) + index * 4,
+          ),
+          this.bb!,
+        )
+      : null;
+  }
+
+  manifestFilesV2Length(): number {
+    const offset = this.bb!.__offset(this.bb_pos, 18);
+    return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+  }
+
+  extra(index: number): number | null {
+    const offset = this.bb!.__offset(this.bb_pos, 20);
+    return offset
+      ? this.bb!.readUint8(this.bb!.__vector(this.bb_pos + offset) + index)
+      : 0;
+  }
+
+  extraLength(): number {
+    const offset = this.bb!.__offset(this.bb_pos, 20);
+    return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+  }
+
+  extraArray(): Uint8Array | null {
+    const offset = this.bb!.__offset(this.bb_pos, 20);
+    return offset
+      ? new Uint8Array(
+          this.bb!.bytes().buffer,
+          this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset),
+          this.bb!.__vector_len(this.bb_pos + offset),
+        )
+      : null;
   }
 }

@@ -4,6 +4,7 @@ import * as flatbuffers from "flatbuffers";
 
 import { DimensionName } from "../generated/dimension-name.js";
 import { DimensionShape } from "../generated/dimension-shape.js";
+import { DimensionShapeV2 } from "../generated/dimension-shape-v2.js";
 import { ManifestRef } from "../generated/manifest-ref.js";
 
 export class ArrayNodeData {
@@ -71,6 +72,23 @@ export class ArrayNodeData {
 
   manifestsLength(): number {
     const offset = this.bb!.__offset(this.bb_pos, 8);
+    return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+  }
+
+  shapeV2(index: number, obj?: DimensionShapeV2): DimensionShapeV2 | null {
+    const offset = this.bb!.__offset(this.bb_pos, 10);
+    return offset
+      ? (obj || new DimensionShapeV2()).__init(
+          this.bb!.__indirect(
+            this.bb!.__vector(this.bb_pos + offset) + index * 4,
+          ),
+          this.bb!,
+        )
+      : null;
+  }
+
+  shapeV2Length(): number {
+    const offset = this.bb!.__offset(this.bb_pos, 10);
     return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
   }
 }

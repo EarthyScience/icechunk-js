@@ -80,19 +80,35 @@ export function parseSnapshot(data: Uint8Array): Snapshot {
     }
   }
 
-  // Parse manifest files (vector of structs)
-  const manifestFilesLength = fbsSnapshot.manifestFilesLength();
+  // Parse manifest files — prefer v2 field, fall back to v1 struct vector
   const manifestFiles: ManifestFileInfo[] = [];
-  for (let i = 0; i < manifestFilesLength; i++) {
-    const fbsMfi = fbsSnapshot.manifestFiles(i);
-    if (fbsMfi) {
-      const mfiIdObj = fbsMfi.id();
-      if (!mfiIdObj) throw new Error("ManifestFileInfo missing id");
-      manifestFiles.push({
-        id: asObjectId12(readId12(mfiIdObj.bb!, mfiIdObj.bb_pos)),
-        sizeBytes: Number(fbsMfi.sizeBytes()),
-        numChunkRefs: fbsMfi.numChunkRefs(),
-      });
+  const v2Length = fbsSnapshot.manifestFilesV2Length();
+  if (v2Length > 0) {
+    for (let i = 0; i < v2Length; i++) {
+      const fbsMfi = fbsSnapshot.manifestFilesV2(i);
+      if (fbsMfi) {
+        const mfiIdObj = fbsMfi.id();
+        if (!mfiIdObj) throw new Error("ManifestFileInfoV2 missing id");
+        manifestFiles.push({
+          id: asObjectId12(readId12(mfiIdObj.bb!, mfiIdObj.bb_pos)),
+          sizeBytes: Number(fbsMfi.sizeBytes()),
+          numChunkRefs: fbsMfi.numChunkRefs(),
+        });
+      }
+    }
+  } else {
+    const v1Length = fbsSnapshot.manifestFilesLength();
+    for (let i = 0; i < v1Length; i++) {
+      const fbsMfi = fbsSnapshot.manifestFiles(i);
+      if (fbsMfi) {
+        const mfiIdObj = fbsMfi.id();
+        if (!mfiIdObj) throw new Error("ManifestFileInfo missing id");
+        manifestFiles.push({
+          id: asObjectId12(readId12(mfiIdObj.bb!, mfiIdObj.bb_pos)),
+          sizeBytes: Number(fbsMfi.sizeBytes()),
+          numChunkRefs: fbsMfi.numChunkRefs(),
+        });
+      }
     }
   }
 

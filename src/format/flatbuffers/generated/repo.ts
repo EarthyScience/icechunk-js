@@ -157,4 +157,96 @@ export class Repo {
       ? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
       : null;
   }
+
+  config(index: number): number | null {
+    const offset = this.bb!.__offset(this.bb_pos, 22);
+    return offset
+      ? this.bb!.readUint8(this.bb!.__vector(this.bb_pos + offset) + index)
+      : 0;
+  }
+
+  configLength(): number {
+    const offset = this.bb!.__offset(this.bb_pos, 22);
+    return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+  }
+
+  configArray(): Uint8Array | null {
+    const offset = this.bb!.__offset(this.bb_pos, 22);
+    return offset
+      ? new Uint8Array(
+          this.bb!.bytes().buffer,
+          this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset),
+          this.bb!.__vector_len(this.bb_pos + offset),
+        )
+      : null;
+  }
+
+  enabledFeatureFlags(index: number): number | null {
+    const offset = this.bb!.__offset(this.bb_pos, 24);
+    return offset
+      ? this.bb!.readUint16(this.bb!.__vector(this.bb_pos + offset) + index * 2)
+      : 0;
+  }
+
+  enabledFeatureFlagsLength(): number {
+    const offset = this.bb!.__offset(this.bb_pos, 24);
+    return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+  }
+
+  enabledFeatureFlagsArray(): Uint16Array | null {
+    const offset = this.bb!.__offset(this.bb_pos, 24);
+    return offset
+      ? new Uint16Array(
+          this.bb!.bytes().buffer,
+          this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset),
+          this.bb!.__vector_len(this.bb_pos + offset),
+        )
+      : null;
+  }
+
+  disabledFeatureFlags(index: number): number | null {
+    const offset = this.bb!.__offset(this.bb_pos, 26);
+    return offset
+      ? this.bb!.readUint16(this.bb!.__vector(this.bb_pos + offset) + index * 2)
+      : 0;
+  }
+
+  disabledFeatureFlagsLength(): number {
+    const offset = this.bb!.__offset(this.bb_pos, 26);
+    return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+  }
+
+  disabledFeatureFlagsArray(): Uint16Array | null {
+    const offset = this.bb!.__offset(this.bb_pos, 26);
+    return offset
+      ? new Uint16Array(
+          this.bb!.bytes().buffer,
+          this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset),
+          this.bb!.__vector_len(this.bb_pos + offset),
+        )
+      : null;
+  }
+
+  extra(index: number): number | null {
+    const offset = this.bb!.__offset(this.bb_pos, 28);
+    return offset
+      ? this.bb!.readUint8(this.bb!.__vector(this.bb_pos + offset) + index)
+      : 0;
+  }
+
+  extraLength(): number {
+    const offset = this.bb!.__offset(this.bb_pos, 28);
+    return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+  }
+
+  extraArray(): Uint8Array | null {
+    const offset = this.bb!.__offset(this.bb_pos, 28);
+    return offset
+      ? new Uint8Array(
+          this.bb!.bytes().buffer,
+          this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset),
+          this.bb!.__vector_len(this.bb_pos + offset),
+        )
+      : null;
+  }
 }

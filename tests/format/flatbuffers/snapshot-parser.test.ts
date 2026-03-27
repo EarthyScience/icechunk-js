@@ -22,11 +22,9 @@ import {
 import { encodeObjectId12 } from "../../../src/format/object-id.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const TEST_DATA_PATH = join(
-  __dirname,
-  "../../data",
-);
+const TEST_DATA_PATH = join(__dirname, "../../data");
 const TEST_REPO_V2_PATH = join(TEST_DATA_PATH, "test-repo-v2");
+const MIGRATED_REPO_V2_PATH = join(TEST_DATA_PATH, "test-repo-v2-migrated");
 
 /** Read and parse a snapshot file (header + optional zstd + FlatBuffer) */
 function readSnapshot(filePath: string) {
@@ -58,10 +56,12 @@ describe("snapshot-parser (real data)", () => {
     }
   });
 
-  it("at least one snapshot has non-empty manifestFiles", () => {
+  it("at least one migrated snapshot has non-empty manifestFiles", () => {
+    const migratedSnapshotDir = join(MIGRATED_REPO_V2_PATH, "snapshots");
+    const migratedFiles = readdirSync(migratedSnapshotDir);
     let found = false;
-    for (const file of snapshotFiles) {
-      const snapshot = readSnapshot(join(snapshotDir, file));
+    for (const file of migratedFiles) {
+      const snapshot = readSnapshot(join(migratedSnapshotDir, file));
       if (snapshot.manifestFiles.length > 0) {
         found = true;
         break;
