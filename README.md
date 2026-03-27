@@ -11,13 +11,13 @@ use with [zarrita](https://github.com/manzt/zarrita.js).
 ## Getting Started
 
 ```bash
-npm install @carbonplan/icechunk-js
+npm install icechunk-js
 ```
 
 ### Basic Usage with zarrita
 
 ```typescript
-import { IcechunkStore } from "@carbonplan/icechunk-js";
+import { IcechunkStore } from "icechunk-js";
 import { open, get } from "zarrita";
 
 // Open a store from a URL
@@ -48,7 +48,7 @@ The main class for zarrita integration. Implements zarrita's `AsyncReadable`
 interface with both `get()` and `getRange()` (needed for sharded arrays).
 
 ```typescript
-import { IcechunkStore } from "@carbonplan/icechunk-js";
+import { IcechunkStore } from "icechunk-js";
 
 // Open from a URL (default: branch "main")
 const store = await IcechunkStore.open("https://example.com/repo", {
@@ -88,7 +88,7 @@ For private datasets with virtual chunks (S3, GCS, Azure), provide a
 `fetchClient` that handles authentication:
 
 ```typescript
-import type { FetchClient } from "@carbonplan/icechunk-js";
+import type { FetchClient } from "icechunk-js";
 
 const fetchClient: FetchClient = {
   async fetch(url, init) {
@@ -120,7 +120,7 @@ Cloud storage URLs in virtual chunk references are automatically translated:
 For direct access to branches, tags, and checkouts.
 
 ```typescript
-import { Repository, HttpStorage } from "@carbonplan/icechunk-js";
+import { Repository, HttpStorage } from "icechunk-js";
 
 const storage = new HttpStorage("https://example.com/repo");
 
@@ -183,7 +183,7 @@ HTTP/HTTPS storage backend using the Fetch API. Works in Node.js 18+ and
 browsers.
 
 ```typescript
-import { HttpStorage } from "@carbonplan/icechunk-js";
+import { HttpStorage } from "icechunk-js";
 
 const storage = new HttpStorage("https://bucket.s3.amazonaws.com/repo", {
   headers: { Authorization: "Bearer token" },
@@ -197,7 +197,7 @@ const storage = new HttpStorage("https://bucket.s3.amazonaws.com/repo", {
 Implement the `Storage` interface for other backends:
 
 ```typescript
-import type { Storage, ByteRange, RequestOptions } from '@carbonplan/icechunk-js';
+import type { Storage, ByteRange, RequestOptions } from 'icechunk-js';
 
 class MyStorage implements Storage {
   async getObject(path: string, range?: ByteRange, options?: RequestOptions): Promise<Uint8Array> { ... }

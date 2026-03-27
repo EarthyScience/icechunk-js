@@ -89,7 +89,7 @@ export interface IcechunkStoreOptions {
  *
  * @example
  * ```typescript
- * import { IcechunkStore } from '@carbonplan/icechunk-js';
+ * import { IcechunkStore } from 'icechunk-js';
  * import { open, get } from 'zarrita';
  *
  * const store = await IcechunkStore.open('https://bucket.s3.amazonaws.com/repo');
