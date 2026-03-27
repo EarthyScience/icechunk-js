@@ -56,6 +56,24 @@ describe("snapshot-parser (real data)", () => {
     }
   });
 
+  it("v2 arrays have non-empty shape via shape_v2", () => {
+    let arrayCount = 0;
+    for (const file of snapshotFiles) {
+      const snapshot = readSnapshot(join(snapshotDir, file));
+      for (const node of snapshot.nodes) {
+        if (node.nodeData.type === "array") {
+          arrayCount++;
+          expect(node.nodeData.shape.length).toBeGreaterThan(0);
+          for (const dim of node.nodeData.shape) {
+            expect(dim.arrayLength).toBeGreaterThan(0);
+            expect(dim.numChunks).toBeGreaterThan(0);
+          }
+        }
+      }
+    }
+    expect(arrayCount).toBeGreaterThan(0);
+  });
+
   it("at least one migrated snapshot has non-empty manifestFiles", () => {
     const migratedSnapshotDir = join(MIGRATED_REPO_V2_PATH, "snapshots");
     const migratedFiles = readdirSync(migratedSnapshotDir);
@@ -71,8 +89,10 @@ describe("snapshot-parser (real data)", () => {
   });
 
   it("manifestFiles have valid id, sizeBytes, and numChunkRefs", () => {
-    for (const file of snapshotFiles) {
-      const snapshot = readSnapshot(join(snapshotDir, file));
+    const migratedSnapshotDir = join(MIGRATED_REPO_V2_PATH, "snapshots");
+    const migratedFiles = readdirSync(migratedSnapshotDir);
+    for (const file of migratedFiles) {
+      const snapshot = readSnapshot(join(migratedSnapshotDir, file));
       for (const mf of snapshot.manifestFiles) {
         // ID should be a 12-byte ObjectId
         expect(mf.id).toBeInstanceOf(Uint8Array);
@@ -90,20 +110,26 @@ describe("snapshot-parser (real data)", () => {
   });
 
   it("manifestFiles IDs correspond to files in manifests/", () => {
+    const migratedSnapshotDir = join(MIGRATED_REPO_V2_PATH, "snapshots");
+    const migratedManifestDir = join(MIGRATED_REPO_V2_PATH, "manifests");
+    const migratedSnapshotFiles = readdirSync(migratedSnapshotDir);
+    const migratedManifestFiles = readdirSync(migratedManifestDir);
+
     // Collect all manifest IDs referenced by any snapshot
     const referencedIds = new Set<string>();
 
-    for (const file of snapshotFiles) {
-      const snapshot = readSnapshot(join(snapshotDir, file));
+    for (const file of migratedSnapshotFiles) {
+      const snapshot = readSnapshot(join(migratedSnapshotDir, file));
       for (const mf of snapshot.manifestFiles) {
         referencedIds.add(encodeObjectId12(mf.id));
       }
     }
 
     // Every referenced manifest ID should have a corresponding file
+    expect(referencedIds.size).toBeGreaterThan(0);
     for (const id of referencedIds) {
       expect(
-        manifestFiles.includes(id),
+        migratedManifestFiles.includes(id),
         `Manifest ID ${id} referenced by snapshot but not found in manifests/`,
       ).toBe(true);
     }

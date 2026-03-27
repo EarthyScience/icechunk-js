@@ -165,16 +165,32 @@ function parseNodeData(
 }
 
 function parseArrayNodeData(fbsArray: FbsArrayNodeData): ArrayNodeData {
-  // Parse shape (vector of DimensionShape structs)
-  const shapeLength = fbsArray.shapeLength();
+  // Parse shape — prefer v2 field, fall back to v1 struct vector
   const shape: DimensionShape[] = [];
-  for (let i = 0; i < shapeLength; i++) {
-    const fbsShape = fbsArray.shape(i);
-    if (fbsShape) {
-      shape.push({
-        arrayLength: Number(fbsShape.arrayLength()),
-        chunkLength: Number(fbsShape.chunkLength()),
-      });
+  const shapeV2Length = fbsArray.shapeV2Length();
+  if (shapeV2Length > 0) {
+    for (let i = 0; i < shapeV2Length; i++) {
+      const fbsShape = fbsArray.shapeV2(i);
+      if (fbsShape) {
+        const arrayLength = Number(fbsShape.arrayLength());
+        const numChunks = fbsShape.numChunks();
+        shape.push({
+          arrayLength,
+          chunkLength: numChunks > 0 ? Math.ceil(arrayLength / numChunks) : 0,
+          numChunks,
+        });
+      }
+    }
+  } else {
+    const shapeLength = fbsArray.shapeLength();
+    for (let i = 0; i < shapeLength; i++) {
+      const fbsShape = fbsArray.shape(i);
+      if (fbsShape) {
+        shape.push({
+          arrayLength: Number(fbsShape.arrayLength()),
+          chunkLength: Number(fbsShape.chunkLength()),
+        });
+      }
     }
   }
 
