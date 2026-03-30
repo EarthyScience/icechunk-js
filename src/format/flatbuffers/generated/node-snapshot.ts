@@ -72,4 +72,27 @@ export class NodeSnapshot {
     const offset = this.bb!.__offset(this.bb_pos, 12);
     return offset ? this.bb!.__union(obj, this.bb_pos + offset) : null;
   }
+
+  extra(index: number): number | null {
+    const offset = this.bb!.__offset(this.bb_pos, 14);
+    return offset
+      ? this.bb!.readUint8(this.bb!.__vector(this.bb_pos + offset) + index)
+      : 0;
+  }
+
+  extraLength(): number {
+    const offset = this.bb!.__offset(this.bb_pos, 14);
+    return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+  }
+
+  extraArray(): Uint8Array | null {
+    const offset = this.bb!.__offset(this.bb_pos, 14);
+    return offset
+      ? new Uint8Array(
+          this.bb!.bytes().buffer,
+          this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset),
+          this.bb!.__vector_len(this.bb_pos + offset),
+        )
+      : null;
+  }
 }

@@ -133,8 +133,11 @@ export interface DimensionShape {
   /** Length of the array along this dimension */
   arrayLength: number;
 
-  /** Chunk size along this dimension */
+  /** Chunk size along this dimension (v1 format; approximate in v2) */
   chunkLength: number;
+
+  /** Number of chunks along this dimension (v2 format) */
+  numChunks?: number;
 }
 
 /** Group node data (empty - just a marker) */

@@ -6,12 +6,14 @@ import { BranchResetUpdate } from "../generated/branch-reset-update.js";
 import { CommitAmendedUpdate } from "../generated/commit-amended-update.js";
 import { ConfigChangedUpdate } from "../generated/config-changed-update.js";
 import { ExpirationRanUpdate } from "../generated/expiration-ran-update.js";
+import { FeatureFlagChangedUpdate } from "../generated/feature-flag-changed-update.js";
 import { GCRanUpdate } from "../generated/gcran-update.js";
 import { MetadataChangedUpdate } from "../generated/metadata-changed-update.js";
 import { NewCommitUpdate } from "../generated/new-commit-update.js";
 import { NewDetachedSnapshotUpdate } from "../generated/new-detached-snapshot-update.js";
 import { RepoInitializedUpdate } from "../generated/repo-initialized-update.js";
 import { RepoMigratedUpdate } from "../generated/repo-migrated-update.js";
+import { RepoStatusChangedUpdate } from "../generated/repo-status-changed-update.js";
 import { TagCreatedUpdate } from "../generated/tag-created-update.js";
 import { TagDeletedUpdate } from "../generated/tag-deleted-update.js";
 
@@ -31,6 +33,8 @@ export enum UpdateType {
   NewDetachedSnapshotUpdate = 12,
   GCRanUpdate = 13,
   ExpirationRanUpdate = 14,
+  FeatureFlagChangedUpdate = 15,
+  RepoStatusChangedUpdate = 16,
 }
 
 export function unionToUpdateType(
@@ -43,12 +47,14 @@ export function unionToUpdateType(
       | CommitAmendedUpdate
       | ConfigChangedUpdate
       | ExpirationRanUpdate
+      | FeatureFlagChangedUpdate
       | GCRanUpdate
       | MetadataChangedUpdate
       | NewCommitUpdate
       | NewDetachedSnapshotUpdate
       | RepoInitializedUpdate
       | RepoMigratedUpdate
+      | RepoStatusChangedUpdate
       | TagCreatedUpdate
       | TagDeletedUpdate,
   ) =>
@@ -58,12 +64,14 @@ export function unionToUpdateType(
     | CommitAmendedUpdate
     | ConfigChangedUpdate
     | ExpirationRanUpdate
+    | FeatureFlagChangedUpdate
     | GCRanUpdate
     | MetadataChangedUpdate
     | NewCommitUpdate
     | NewDetachedSnapshotUpdate
     | RepoInitializedUpdate
     | RepoMigratedUpdate
+    | RepoStatusChangedUpdate
     | TagCreatedUpdate
     | TagDeletedUpdate
     | null,
@@ -74,12 +82,14 @@ export function unionToUpdateType(
   | CommitAmendedUpdate
   | ConfigChangedUpdate
   | ExpirationRanUpdate
+  | FeatureFlagChangedUpdate
   | GCRanUpdate
   | MetadataChangedUpdate
   | NewCommitUpdate
   | NewDetachedSnapshotUpdate
   | RepoInitializedUpdate
   | RepoMigratedUpdate
+  | RepoStatusChangedUpdate
   | TagCreatedUpdate
   | TagDeletedUpdate
   | null {
@@ -116,6 +126,14 @@ export function unionToUpdateType(
       return accessor(new GCRanUpdate())! as GCRanUpdate;
     case "ExpirationRanUpdate":
       return accessor(new ExpirationRanUpdate())! as ExpirationRanUpdate;
+    case "FeatureFlagChangedUpdate":
+      return accessor(
+        new FeatureFlagChangedUpdate(),
+      )! as FeatureFlagChangedUpdate;
+    case "RepoStatusChangedUpdate":
+      return accessor(
+        new RepoStatusChangedUpdate(),
+      )! as RepoStatusChangedUpdate;
     default:
       return null;
   }
@@ -132,12 +150,14 @@ export function unionListToUpdateType(
       | CommitAmendedUpdate
       | ConfigChangedUpdate
       | ExpirationRanUpdate
+      | FeatureFlagChangedUpdate
       | GCRanUpdate
       | MetadataChangedUpdate
       | NewCommitUpdate
       | NewDetachedSnapshotUpdate
       | RepoInitializedUpdate
       | RepoMigratedUpdate
+      | RepoStatusChangedUpdate
       | TagCreatedUpdate
       | TagDeletedUpdate,
   ) =>
@@ -147,12 +167,14 @@ export function unionListToUpdateType(
     | CommitAmendedUpdate
     | ConfigChangedUpdate
     | ExpirationRanUpdate
+    | FeatureFlagChangedUpdate
     | GCRanUpdate
     | MetadataChangedUpdate
     | NewCommitUpdate
     | NewDetachedSnapshotUpdate
     | RepoInitializedUpdate
     | RepoMigratedUpdate
+    | RepoStatusChangedUpdate
     | TagCreatedUpdate
     | TagDeletedUpdate
     | null,
@@ -164,12 +186,14 @@ export function unionListToUpdateType(
   | CommitAmendedUpdate
   | ConfigChangedUpdate
   | ExpirationRanUpdate
+  | FeatureFlagChangedUpdate
   | GCRanUpdate
   | MetadataChangedUpdate
   | NewCommitUpdate
   | NewDetachedSnapshotUpdate
   | RepoInitializedUpdate
   | RepoMigratedUpdate
+  | RepoStatusChangedUpdate
   | TagCreatedUpdate
   | TagDeletedUpdate
   | null {
@@ -213,6 +237,16 @@ export function unionListToUpdateType(
       return accessor(index, new GCRanUpdate())! as GCRanUpdate;
     case "ExpirationRanUpdate":
       return accessor(index, new ExpirationRanUpdate())! as ExpirationRanUpdate;
+    case "FeatureFlagChangedUpdate":
+      return accessor(
+        index,
+        new FeatureFlagChangedUpdate(),
+      )! as FeatureFlagChangedUpdate;
+    case "RepoStatusChangedUpdate":
+      return accessor(
+        index,
+        new RepoStatusChangedUpdate(),
+      )! as RepoStatusChangedUpdate;
     default:
       return null;
   }

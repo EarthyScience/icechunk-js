@@ -15,10 +15,7 @@ import { encodeObjectId12 } from "../../../src/format/object-id.js";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // Path to v2 test repository
-const TEST_REPO_V2_PATH = join(
-  __dirname,
-  "../../data/test-repo-v2",
-);
+const TEST_REPO_V2_PATH = join(__dirname, "../../data/test-repo-v2");
 
 describe("repo-parser", () => {
   describe("parseRepo", () => {

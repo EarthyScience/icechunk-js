@@ -47,4 +47,55 @@ export class Manifest {
     const offset = this.bb!.__offset(this.bb_pos, 6);
     return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
   }
+
+  locationDictionary(index: number): number | null {
+    const offset = this.bb!.__offset(this.bb_pos, 8);
+    return offset
+      ? this.bb!.readUint8(this.bb!.__vector(this.bb_pos + offset) + index)
+      : 0;
+  }
+
+  locationDictionaryLength(): number {
+    const offset = this.bb!.__offset(this.bb_pos, 8);
+    return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+  }
+
+  locationDictionaryArray(): Uint8Array | null {
+    const offset = this.bb!.__offset(this.bb_pos, 8);
+    return offset
+      ? new Uint8Array(
+          this.bb!.bytes().buffer,
+          this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset),
+          this.bb!.__vector_len(this.bb_pos + offset),
+        )
+      : null;
+  }
+
+  compressionAlgorithm(): number {
+    const offset = this.bb!.__offset(this.bb_pos, 10);
+    return offset ? this.bb!.readUint8(this.bb_pos + offset) : 1;
+  }
+
+  extra(index: number): number | null {
+    const offset = this.bb!.__offset(this.bb_pos, 12);
+    return offset
+      ? this.bb!.readUint8(this.bb!.__vector(this.bb_pos + offset) + index)
+      : 0;
+  }
+
+  extraLength(): number {
+    const offset = this.bb!.__offset(this.bb_pos, 12);
+    return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+  }
+
+  extraArray(): Uint8Array | null {
+    const offset = this.bb!.__offset(this.bb_pos, 12);
+    return offset
+      ? new Uint8Array(
+          this.bb!.bytes().buffer,
+          this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset),
+          this.bb!.__vector_len(this.bb_pos + offset),
+        )
+      : null;
+  }
 }

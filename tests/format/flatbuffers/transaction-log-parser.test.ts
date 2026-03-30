@@ -18,10 +18,7 @@ import {
 } from "../../../src/format/header.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const TEST_REPO_V2_PATH = join(
-  __dirname,
-  "../../data/test-repo-v2",
-);
+const TEST_REPO_V2_PATH = join(__dirname, "../../data/test-repo-v2");
 
 /** Read and parse a transaction log file (header + optional zstd + FlatBuffer) */
 function readTransactionLog(filePath: string) {

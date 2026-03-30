@@ -47,4 +47,27 @@ export class ArrayManifest {
     const offset = this.bb!.__offset(this.bb_pos, 6);
     return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
   }
+
+  extra(index: number): number | null {
+    const offset = this.bb!.__offset(this.bb_pos, 8);
+    return offset
+      ? this.bb!.readUint8(this.bb!.__vector(this.bb_pos + offset) + index)
+      : 0;
+  }
+
+  extraLength(): number {
+    const offset = this.bb!.__offset(this.bb_pos, 8);
+    return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+  }
+
+  extraArray(): Uint8Array | null {
+    const offset = this.bb!.__offset(this.bb_pos, 8);
+    return offset
+      ? new Uint8Array(
+          this.bb!.bytes().buffer,
+          this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset),
+          this.bb!.__vector_len(this.bb_pos + offset),
+        )
+      : null;
+  }
 }
