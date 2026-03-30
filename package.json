@@ -64,5 +64,13 @@
     "zarrita": {
       "optional": true
     }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/EarthyScience/icechunk-js.git"
+  },
+  "homepage": "https://github.com/EarthyScience/icechunk-js#readme",
+  "bugs": {
+    "url": "https://github.com/EarthyScience/icechunk-js/issues"
   }
 }

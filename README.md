@@ -1,5 +1,10 @@
 # Icechunk JavaScript
 
+[![npm version](https://img.shields.io/npm/v/icechunk-js.svg)](https://www.npmjs.com/package/icechunk-js)
+[![Icechunk](https://img.shields.io/badge/Icechunk-008B8B)](https://github.com/earth-mover/icechunk)
+[![Zarrita.js](https://img.shields.io/badge/Zarrita.js-Compatible-EE3F98)](https://github.com/manzt/zarrita.js)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/EarthyScience/icechunk-js/blob/main/LICENSE)
+
 Read-only JavaScript/TypeScript reader for Icechunk repositories, designed for
 use with [zarrita](https://github.com/manzt/zarrita.js).
 
