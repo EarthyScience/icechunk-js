@@ -13,6 +13,7 @@ jobs:
     strategy:
       matrix:
         node-version: [18, 20, 22]
+        zarrita-version: ["0.5", "0.6"]
 
     steps:
       - uses: actions/checkout@v4
@@ -25,6 +26,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Install zarrita ${{ matrix.zarrita-version }}
+        run: npm install --no-save zarrita@^${{ matrix.zarrita-version }}.0
 
       - name: Run tests
         run: npm test

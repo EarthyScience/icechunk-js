@@ -58,7 +58,7 @@
     "zarrita": "^0.5.0"
   },
   "peerDependencies": {
-    "zarrita": "^0.5.0"
+    "zarrita": "^0.5.0 || ^0.6.0"
   },
   "peerDependenciesMeta": {
     "zarrita": {
