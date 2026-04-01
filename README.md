@@ -45,6 +45,10 @@ npm run test
 npm run typecheck
 ```
 
+To regenerate FlatBuffers TypeScript after syncing schemas, run `npm run generate:fbs`.
+The pinned `flatc` compiler is downloaded automatically if not already available.
+The version is set in `scripts/ensure-flatc.sh`.
+
 ## API
 
 ### IcechunkStore

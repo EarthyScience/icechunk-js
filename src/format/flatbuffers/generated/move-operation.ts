@@ -2,6 +2,9 @@
 
 import * as flatbuffers from "flatbuffers";
 
+import { NodeType } from "../generated/node-type.js";
+import { ObjectId8 } from "../generated/object-id8.js";
+
 export class MoveOperation {
   bb: flatbuffers.ByteBuffer | null = null;
   bb_pos = 0;
@@ -37,5 +40,17 @@ export class MoveOperation {
     return offset
       ? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
       : null;
+  }
+
+  nodeId(obj?: ObjectId8): ObjectId8 | null {
+    const offset = this.bb!.__offset(this.bb_pos, 8);
+    return offset
+      ? (obj || new ObjectId8()).__init(this.bb_pos + offset, this.bb!)
+      : null;
+  }
+
+  nodeType(): NodeType {
+    const offset = this.bb!.__offset(this.bb_pos, 10);
+    return offset ? this.bb!.readUint8(this.bb_pos + offset) : NodeType.Group;
   }
 }
