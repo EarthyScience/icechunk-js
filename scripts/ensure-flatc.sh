@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Ensure the pinned flatc version is available at .bin/flatc.
 # Downloads it if missing or wrong version. Prints the path on stdout.
 #
@@ -43,7 +43,7 @@ TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
 
 echo "Downloading flatc v${FLATC_VERSION}..." >&2
-curl -sL "$URL" -o "$TMPDIR/flatc.zip"
+curl -fsSL "$URL" -o "$TMPDIR/flatc.zip"
 unzip -o -q "$TMPDIR/flatc.zip" -d "$BIN_DIR/"
 chmod +x "$FLATC"
 
