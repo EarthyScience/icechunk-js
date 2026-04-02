@@ -1,4 +1,4 @@
-# Icechunk JavaScript
+# icechunk-js
 
 [![npm version](https://img.shields.io/npm/v/icechunk-js.svg)](https://www.npmjs.com/package/icechunk-js)
 [![Icechunk](https://img.shields.io/badge/Icechunk-008B8B)](https://github.com/earth-mover/icechunk)
