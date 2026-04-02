@@ -10,7 +10,7 @@
  *   branch: 'main'
  * });
  *
- * const array = await open(store, { kind: 'array', path: '/temperature' });
+ * const array = await open(store.resolve('/temperature'), { kind: 'array' });
  * const data = await get(array, [0, 0, null]);
  * ```
  */

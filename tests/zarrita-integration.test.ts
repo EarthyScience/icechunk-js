@@ -53,6 +53,21 @@ describe("Zarrita Integration", () => {
           expect(data.data[i]).toBe(42.0);
         }
       });
+
+      it("should open array via store.resolve() (README pattern)", async () => {
+        const store = await IcechunkStore.open(getFixtureUrl("test-repo-v1"));
+        const arr = await z.open(store.resolve("/group1/small_chunks"), {
+          kind: "array",
+        });
+
+        expect(arr.shape).toEqual([5]);
+        expect(arr.dtype).toBe("int8");
+
+        const data = await z.get(arr);
+        for (let i = 0; i < 5; i++) {
+          expect(data.data[i]).toBe(84);
+        }
+      });
     });
 
     describe("groups", () => {

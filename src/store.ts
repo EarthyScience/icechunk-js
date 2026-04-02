@@ -93,7 +93,7 @@ export interface IcechunkStoreOptions {
  * import { open, get } from 'zarrita';
  *
  * const store = await IcechunkStore.open('https://bucket.s3.amazonaws.com/repo');
- * const array = await open(store, { kind: 'array', path: '/temperature' });
+ * const array = await open(store.resolve('/temperature'), { kind: 'array' });
  * const data = await get(array, [0, 0, null]);
  * ```
  */
