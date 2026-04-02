@@ -51,20 +51,21 @@ try {
   const genFiles = readdirSync(generatedDir).sort();
   const comFiles = readdirSync(committedDir).sort();
 
+  let dirty = false;
+
   if (genFiles.join(",") !== comFiles.join(",")) {
     console.error("File list mismatch:");
     console.error("  generated:", genFiles.join(", "));
     console.error("  committed:", comFiles.join(", "));
-    process.exit(1);
-  }
-
-  let dirty = false;
-  for (const file of genFiles) {
-    const a = readFileSync(join(generatedDir, file), "utf8");
-    const b = readFileSync(join(committedDir, file), "utf8");
-    if (a !== b) {
-      console.error(`DIFF: ${file}`);
-      dirty = true;
+    dirty = true;
+  } else {
+    for (const file of genFiles) {
+      const a = readFileSync(join(generatedDir, file), "utf8");
+      const b = readFileSync(join(committedDir, file), "utf8");
+      if (a !== b) {
+        console.error(`DIFF: ${file}`);
+        dirty = true;
+      }
     }
   }
 
@@ -72,10 +73,10 @@ try {
     console.error(
       "Generated FlatBuffer code is out of date. Run: npm run generate:fbs",
     );
-    process.exit(1);
+    process.exitCode = 1;
+  } else {
+    console.log("FlatBuffer generated code is up to date.");
   }
-
-  console.log("FlatBuffer generated code is up to date.");
 } finally {
   rmSync(tmp, { recursive: true, force: true });
 }

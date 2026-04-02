@@ -9,7 +9,7 @@
  *   node scripts/sync.mjs --if-missing fixtures       # only if dest dir is missing
  *   node scripts/sync.mjs --branch some-branch fixtures
  */
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, mkdirSync, cpSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
@@ -44,6 +44,10 @@ const args = process.argv.slice(2);
 for (let i = 0; i < args.length; i++) {
   if (args[i] === "--branch") {
     branch = args[++i];
+    if (branch === undefined) {
+      console.error("Error: --branch requires an argument");
+      process.exit(1);
+    }
   } else if (args[i] === "--if-missing") {
     ifMissing = true;
   } else if (TARGETS[args[i]]) {
@@ -74,23 +78,29 @@ if (toSync.length === 0) {
   process.exit(0);
 }
 
-function run(cmd, opts = {}) {
-  execSync(cmd, { stdio: "inherit", ...opts });
+function git(args, opts = {}) {
+  execFileSync("git", args, { stdio: "inherit", ...opts });
 }
 
 const tmp = mkdtempSync(join(tmpdir(), "icechunk-sync-"));
 
 try {
   console.log(`Cloning icechunk repo (sparse, branch=${branch})...`);
-  run(
-    `git clone --depth 1 --no-checkout --branch "${branch}" ${REPO} "${tmp}"`,
-  );
-  run(`git sparse-checkout init --no-cone`, { cwd: tmp });
-  run(
-    `git sparse-checkout set ${toSync.map((t) => TARGETS[t].sparse).join(" ")}`,
-    { cwd: tmp },
-  );
-  run("git checkout", { cwd: tmp });
+  git([
+    "clone",
+    "--depth",
+    "1",
+    "--no-checkout",
+    "--branch",
+    branch,
+    REPO,
+    tmp,
+  ]);
+  git(["sparse-checkout", "init", "--no-cone"], { cwd: tmp });
+  git(["sparse-checkout", "set", ...toSync.map((t) => TARGETS[t].sparse)], {
+    cwd: tmp,
+  });
+  git(["checkout"], { cwd: tmp });
 
   for (const name of toSync) {
     const t = TARGETS[name];
