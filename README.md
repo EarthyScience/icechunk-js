@@ -8,8 +8,7 @@
 Read-only JavaScript/TypeScript reader for Icechunk repositories, designed for
 use with [zarrita](https://github.com/manzt/zarrita.js).
 
-- ~50KB bundle, zero native dependencies
-- Works in browsers, Node.js 18+, Deno, and Bun
+- Pure TypeScript, works in browsers and Node.js 18+
 - Icechunk v1 and v2 format auto-detection
 - All chunk payload types: inline, native, and virtual
 
@@ -29,7 +28,7 @@ import { open, get } from "zarrita";
 const store = await IcechunkStore.open("https://bucket.s3.amazonaws.com/repo");
 
 // Open an array and read data
-const array = await open(store, { kind: "array", path: "/temperature" });
+const array = await open(store.resolve("/temperature"), { kind: "array" });
 const data = await get(array, [0, 0, null]);
 ```
 
@@ -66,6 +65,9 @@ const store = await IcechunkStore.open("https://example.com/repo", {
   // snapshot: 'ABC123...',
   // formatVersion: 'v1',     // skip format auto-detection for v1 repos
   // maxManifestCacheSize: 50, // LRU cache size (default: 100)
+  // signal: abortController.signal, // cancel initialization
+  // validateChecksums: true,  // integrity headers for virtual chunks
+  // azureAccount: 'myaccount', // required for az:// virtual chunks
 });
 
 // Open from an existing ReadSession
@@ -103,7 +105,7 @@ const fetchClient: FetchClient = {
   async fetch(url, init) {
     // URL rewriting, pre-signing, or header injection happens here.
     // icechunk-js has already translated s3:// → https:// and built
-    // Range / If-None-Match headers in `init`.
+    // Range headers in `init` (plus If-Match when validateChecksums is on).
     const signedUrl = await presign(url);
     return globalThis.fetch(signedUrl, {
       ...init,
@@ -120,13 +122,21 @@ const store = await IcechunkStore.open("https://example.com/repo", {
 Cloud storage URLs in virtual chunk references are automatically translated:
 
 - `s3://bucket/key` → `https://bucket.s3.amazonaws.com/key`
-- `gs://bucket/key` → `https://storage.googleapis.com/bucket/key`
-- `az://account/container/path` → `https://account.blob.core.windows.net/container/path`
-- `abfs://container@account.dfs.core.windows.net/path` → `https://account.blob.core.windows.net/container/path`
+- `gs://bucket/key` (or `gcs://`) → `https://storage.googleapis.com/bucket/key`
+- `az://container/path` (or `azure://`) →
+  `https://{azureAccount}.blob.core.windows.net/container/path`
+- `abfs://container@account.dfs.core.windows.net/path` →
+  `https://account.blob.core.windows.net/container/path`
 
 ### Repository
 
 For direct access to branches, tags, and checkouts.
+
+> **Note:** Over plain HTTP, branch and tag operations (`listBranches`,
+> `listTags`, `checkoutBranch`, etc.) only work reliably with v2 repos, which
+> embed all refs in a single repo file. V1 repos store refs as individual files
+> with versioned names that require `listPrefix()` to discover — something
+> `HttpStorage` cannot do. Use a listing-capable storage backend for v1 repos.
 
 ```typescript
 import { Repository, HttpStorage } from "icechunk-js";
@@ -139,7 +149,7 @@ const repo = await Repository.open({ storage });
 // Or with format version hint (skips /repo request for v1 stores)
 // const repo = await Repository.open({ storage, formatVersion: 'v1' });
 
-// List branches and tags
+// List branches and tags (v2 repos, or storage backends that support listing)
 const branches = await repo.listBranches();
 const tags = await repo.listTags();
 
@@ -153,7 +163,7 @@ const session = await repo.checkoutBranch("main");
 
 ```typescript
 for await (const entry of repo.walkHistory(session)) {
-  console.log(entry.id, entry.message, entry.flushedAt);
+  console.log(entry.id, entry.message, entry.flushedAt, entry.metadata);
 }
 ```
 
