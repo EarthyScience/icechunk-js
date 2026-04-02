@@ -1,6 +1,9 @@
 # Dependencies
 node_modules/
 
+# Local tooling (downloaded by scripts/ensure-flatc.sh)
+.bin/
+
 # Build output
 dist/
 

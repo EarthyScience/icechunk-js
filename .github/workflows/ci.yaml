@@ -80,12 +80,6 @@ jobs:
           node-version: 20
           cache: "npm"
 
-      - name: Install FlatBuffers compiler
-        run: |
-          curl -L https://github.com/google/flatbuffers/releases/download/v25.2.10/Linux.flatc.binary.clang++-18.zip -o flatc.zip
-          unzip flatc.zip -d /usr/local/bin/
-          chmod +x /usr/local/bin/flatc
-
       - name: Install dependencies
         run: npm ci
 

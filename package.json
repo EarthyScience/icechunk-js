@@ -34,8 +34,8 @@
     "prepare": "test -d tests/data || ./scripts/sync-fixtures.sh && test -d flatbuffers || ./scripts/sync-flatbuffers.sh",
     "sync:fixtures": "./scripts/sync-fixtures.sh",
     "sync:fbs": "./scripts/sync-flatbuffers.sh",
-    "generate:fbs": "flatc -T -o ./src/format/flatbuffers --gen-all ./flatbuffers/all.fbs && node scripts/postgen-fbs.cjs ./src/format/flatbuffers && prettier --write src/format/flatbuffers/generated",
-    "check:fbs": "flatc -T -o /tmp/fbs-check --gen-all ./flatbuffers/all.fbs && node scripts/postgen-fbs.cjs /tmp/fbs-check && prettier --write /tmp/fbs-check/generated && diff -r /tmp/fbs-check/generated src/format/flatbuffers/generated"
+    "generate:fbs": "FLATC=\"$(./scripts/ensure-flatc.sh)\" && \"$FLATC\" -T -o ./src/format/flatbuffers --gen-all ./flatbuffers/all.fbs && node scripts/postgen-fbs.cjs ./src/format/flatbuffers && prettier --write src/format/flatbuffers/generated",
+    "check:fbs": "rm -rf /tmp/fbs-check && FLATC=\"$(./scripts/ensure-flatc.sh)\" && \"$FLATC\" -T -o /tmp/fbs-check --gen-all ./flatbuffers/all.fbs && node scripts/postgen-fbs.cjs /tmp/fbs-check && prettier --write /tmp/fbs-check/generated && diff -r /tmp/fbs-check/generated src/format/flatbuffers/generated"
   },
   "keywords": [
     "icechunk",
