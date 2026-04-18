@@ -57,6 +57,7 @@ function createMockSession(options: {
   nodes?: NodeSnapshot[];
   storage?: MockStorage;
   specVersion?: SpecVersion;
+  virtualChunkContainers?: Map<string, string>;
 }): ReadSession {
   const mockSnapshot: Snapshot = {
     id: createMockSnapshotId(1) as any,
@@ -73,6 +74,8 @@ function createMockSession(options: {
   session.snapshot = mockSnapshot;
   session.specVersion = options.specVersion ?? SpecVersion.V1_0;
   session.manifestCache = new Map();
+  session.virtualChunkContainers =
+    options.virtualChunkContainers ?? new Map<string, string>();
 
   return session;
 }
@@ -641,6 +644,60 @@ describe("ReadSession", () => {
 
       const result = await session.fetchChunkPayload(payload);
       expect(result).toBe(inlineData);
+    });
+
+    it("expands vcc:// locations to the container's url_prefix before fetching", async () => {
+      const mockData = new Uint8Array(4);
+      const fetchClient = {
+        fetch: vi.fn().mockResolvedValue({
+          ok: true,
+          status: 206,
+          arrayBuffer: vi.fn().mockResolvedValue(mockData.buffer),
+        } as any),
+      };
+
+      const session = createMockSession({
+        nodes: [],
+        virtualChunkContainers: new Map([
+          ["my-data", "https://example.com/data/"],
+        ]),
+      }) as any;
+
+      const payload = {
+        type: "virtual" as const,
+        location: "vcc://my-data/chunks/abc.nc",
+        offset: 0,
+        length: 4,
+        checksumEtag: null,
+        checksumLastModified: 0,
+      };
+
+      await session.fetchChunkPayload(payload, { fetchClient });
+
+      expect(fetchClient.fetch).toHaveBeenCalledWith(
+        "https://example.com/data/chunks/abc.nc",
+        expect.objectContaining({ headers: { Range: "bytes=0-3" } }),
+      );
+    });
+
+    it("throws a clear error when a vcc:// URL references an unknown container", async () => {
+      const session = createMockSession({
+        nodes: [],
+        virtualChunkContainers: new Map([["known", "https://example.com/"]]),
+      }) as any;
+
+      const payload = {
+        type: "virtual" as const,
+        location: "vcc://missing/chunk",
+        offset: 0,
+        length: 4,
+        checksumEtag: null,
+        checksumLastModified: 0,
+      };
+
+      await expect(session.fetchChunkPayload(payload)).rejects.toThrow(
+        /Unknown virtual chunk container "missing"/,
+      );
     });
 
     it("should slice native full-object fallback when Range is ignored", async () => {
