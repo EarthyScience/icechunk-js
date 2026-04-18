@@ -185,7 +185,7 @@ export class Repository {
    * version has the highest filename. Deletion tombstones are checked.
    *
    * When listing is not supported (e.g., HTTP storage), only the legacy
-   * ref.json path is checked (no tombstone check - assumes read-only).
+   * ref.json path is returned (caller must handle NotFoundError on read).
    *
    * @param dirPrefix - Directory prefix to search
    * @param legacyPath - Optional legacy ref.json path to try if listing fails
@@ -237,7 +237,9 @@ export class Repository {
   /**
    * List all branches in the repository.
    *
-   * Branches with deletion tombstones on their latest ref file are excluded.
+   * Unlike tags, branches in icechunk v1 have no tombstone mechanism —
+   * deletion removes the ref file outright. A branch is present iff it has
+   * at least one ref file in its directory.
    *
    * @returns Array of branch names
    */
@@ -249,66 +251,27 @@ export class Repository {
     }
 
     // V1 fallback - file-based lookup
-    // Track files per branch: branch name -> { jsonFiles, deletedFiles }
-    const branchFiles = new Map<
-      string,
-      { jsonFiles: string[]; deletedFiles: Set<string> }
-    >();
+    const branches = new Set<string>();
 
     try {
       for await (const path of this.storage.listPrefix(
         `${PATHS.REFS}/branch.`,
       )) {
-        // Extract branch name from paths like:
-        // - "refs/branch.main/ZZZZZZZZ.json" (versioned)
-        // - "refs/branch.main/ref.json" (legacy)
-        // - "refs/branch.main/ZZZZZZZZ.json.deleted" (deletion tombstone)
-        const jsonMatch = path.match(/^refs\/branch\.(.+)\/([^/]+\.json)$/);
-        const deletedMatch = path.match(
-          /^refs\/branch\.(.+)\/([^/]+\.json)\.deleted$/,
-        );
-
-        if (deletedMatch) {
-          const branchName = deletedMatch[1];
-          const refFile = `refs/branch.${branchName}/${deletedMatch[2]}`;
-          if (!branchFiles.has(branchName)) {
-            branchFiles.set(branchName, {
-              jsonFiles: [],
-              deletedFiles: new Set(),
-            });
-          }
-          branchFiles.get(branchName)!.deletedFiles.add(refFile);
-        } else if (jsonMatch) {
-          const branchName = jsonMatch[1];
-          if (!branchFiles.has(branchName)) {
-            branchFiles.set(branchName, {
-              jsonFiles: [],
-              deletedFiles: new Set(),
-            });
-          }
-          branchFiles.get(branchName)!.jsonFiles.push(path);
+        // Match ref files like "refs/branch.main/ref.json" (ignore tombstones
+        // for defensiveness — Rust never writes them for branches).
+        const match = path.match(/^refs\/branch\.(.+)\/([^/]+\.json)$/);
+        if (match) {
+          branches.add(match[1]);
         }
       }
-    } catch {
+    } catch (error) {
+      if (error instanceof AbortError) {
+        throw error;
+      }
       throw new Error("Cannot list branches: storage does not support listing");
     }
 
-    // Filter to only include branches where latest ref is not deleted
-    const result: string[] = [];
-    for (const [branchName, { jsonFiles, deletedFiles }] of branchFiles) {
-      if (jsonFiles.length === 0) continue;
-
-      // Sort to find latest
-      jsonFiles.sort();
-      const latestRef = jsonFiles[jsonFiles.length - 1];
-
-      // Include only if latest ref is not deleted
-      if (!deletedFiles.has(latestRef)) {
-        result.push(branchName);
-      }
-    }
-
-    return result;
+    return [...branches];
   }
 
   /**
@@ -358,7 +321,10 @@ export class Repository {
           tagFiles.get(tagName)!.jsonFiles.push(path);
         }
       }
-    } catch {
+    } catch (error) {
+      if (error instanceof AbortError) {
+        throw error;
+      }
       throw new Error("Cannot list tags: storage does not support listing");
     }
 
