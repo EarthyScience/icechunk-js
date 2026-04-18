@@ -1,5 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
+import { readFileSync, readdirSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { ReadSession } from "../../src/reader/session.js";
+import { Repository } from "../../src/reader/repository.js";
 import {
   MockStorage,
   createMockHeader,
@@ -14,6 +18,36 @@ import type {
   NodeSnapshot,
   ArrayNodeData,
 } from "../../src/format/flatbuffers/types.js";
+
+// ESM equivalent of __dirname
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+// Path to v1 test repository (used for real-fixture snapshot/txlog tests).
+const TEST_REPO_V1_PATH = join(__dirname, "../data/test-repo-v1");
+
+/**
+ * Load a repo directory tree into a MockStorage.
+ * Mirrors the helper in repository.test.ts; used for real-fixture
+ * integration tests that exercise snapshot/transaction-log parsing.
+ */
+function loadRepoIntoMockStorage(repoPath: string): MockStorage {
+  const storage = new MockStorage({});
+
+  function loadDir(dirPath: string, prefix: string = ""): void {
+    for (const entry of readdirSync(dirPath, { withFileTypes: true })) {
+      const fullPath = join(dirPath, entry.name);
+      const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) {
+        loadDir(fullPath, relativePath);
+      } else {
+        storage.addFile(relativePath, readFileSync(fullPath));
+      }
+    }
+  }
+
+  loadDir(repoPath);
+  return storage;
+}
 
 /**
  * Helper to create a mock ReadSession with injected snapshot data.
@@ -928,6 +962,113 @@ describe("ReadSession", () => {
       });
 
       expect(result).toBeNull();
+    });
+  });
+
+  describe("snapshot getters (real fixture)", () => {
+    // v1 fixture main branch history is linear:
+    //   NXH3M0HJ7EEJ0699DPP0 "set virtual chunk"       (head)
+    //   7XAF0Q905SH4938DN9CG "fill data"
+    //   GC4YVH5SKBPEZCENYQE0 "empty structure"
+    //   P874YS3J196959RDHX7G "Repository initialized"  (root, parent=null)
+
+    it("should return 12-byte snapshot id matching the checked-out snapshot", async () => {
+      const storage = loadRepoIntoMockStorage(TEST_REPO_V1_PATH);
+      const repo = await Repository.open({ storage });
+      const session = await repo.checkoutBranch("main");
+
+      const id = session.getSnapshotId();
+      expect(id).toBeInstanceOf(Uint8Array);
+      expect(id.length).toBe(12);
+      expect(encodeObjectId12(id)).toBe("NXH3M0HJ7EEJ0699DPP0");
+    });
+
+    it("should return parent snapshot id for a non-root commit", async () => {
+      const storage = loadRepoIntoMockStorage(TEST_REPO_V1_PATH);
+      const repo = await Repository.open({ storage });
+      const session = await repo.checkoutBranch("main");
+
+      const parent = session.getParentSnapshotId();
+      expect(parent).not.toBeNull();
+      expect(encodeObjectId12(parent!)).toBe("7XAF0Q905SH4938DN9CG");
+    });
+
+    it("should return null parent for the root snapshot", async () => {
+      const storage = loadRepoIntoMockStorage(TEST_REPO_V1_PATH);
+      const repo = await Repository.open({ storage });
+      const session = await repo.checkoutSnapshot("P874YS3J196959RDHX7G");
+
+      expect(session.getParentSnapshotId()).toBeNull();
+    });
+
+    it("should return the commit message", async () => {
+      const storage = loadRepoIntoMockStorage(TEST_REPO_V1_PATH);
+      const repo = await Repository.open({ storage });
+      const session = await repo.checkoutBranch("main");
+
+      expect(session.getMessage()).toBe("set virtual chunk");
+    });
+
+    it("should return flushedAt as a Date in the expected era", async () => {
+      const storage = loadRepoIntoMockStorage(TEST_REPO_V1_PATH);
+      const repo = await Repository.open({ storage });
+      const session = await repo.checkoutBranch("main");
+
+      const flushedAt = session.getFlushedAt();
+      expect(flushedAt).toBeInstanceOf(Date);
+      // Fixture was written in 2026 Q1/Q2 — assert a loose lower bound so
+      // this doesn't break if fixtures are regenerated.
+      expect(flushedAt.getTime()).toBeGreaterThan(
+        new Date("2020-01-01").getTime(),
+      );
+      expect(flushedAt.getTime()).toBeLessThan(Date.now() + 86400_000);
+    });
+
+    it("should return snapshot metadata as a plain object", async () => {
+      const storage = loadRepoIntoMockStorage(TEST_REPO_V1_PATH);
+      const repo = await Repository.open({ storage });
+      const session = await repo.checkoutBranch("main");
+
+      const metadata = session.getSnapshotMetadata();
+      expect(metadata).toBeTypeOf("object");
+      expect(metadata).not.toBeNull();
+    });
+  });
+
+  describe("loadTransactionLog (real fixture)", () => {
+    it("should parse a transaction log for a non-root commit", async () => {
+      const storage = loadRepoIntoMockStorage(TEST_REPO_V1_PATH);
+      const repo = await Repository.open({ storage });
+      const session = await repo.checkoutBranch("main");
+
+      const txLog = await session.loadTransactionLog();
+      expect(txLog).not.toBeNull();
+      // Every list field should be present and array-valued.
+      expect(Array.isArray(txLog!.newArrays)).toBe(true);
+      expect(Array.isArray(txLog!.newGroups)).toBe(true);
+      expect(Array.isArray(txLog!.updatedArrays)).toBe(true);
+      expect(Array.isArray(txLog!.updatedGroups)).toBe(true);
+      expect(Array.isArray(txLog!.updatedChunks)).toBe(true);
+      expect(Array.isArray(txLog!.deletedArrays)).toBe(true);
+      expect(Array.isArray(txLog!.deletedGroups)).toBe(true);
+      // The "set virtual chunk" commit touches at least one chunk.
+      expect(txLog!.updatedChunks.length).toBeGreaterThan(0);
+      // Its id should equal the current snapshot id.
+      expect(encodeObjectId12(txLog!.id as Uint8Array)).toBe(
+        "NXH3M0HJ7EEJ0699DPP0",
+      );
+    });
+
+    it("should return null when no transaction log file exists for the snapshot", async () => {
+      // The v1 fixture's root snapshot "Repository initialized" has no
+      // transactions/<id> file. loadTransactionLog should translate the
+      // resulting NotFoundError into null (per the README contract).
+      const storage = loadRepoIntoMockStorage(TEST_REPO_V1_PATH);
+      const repo = await Repository.open({ storage });
+      const session = await repo.checkoutSnapshot("P874YS3J196959RDHX7G");
+
+      const txLog = await session.loadTransactionLog();
+      expect(txLog).toBeNull();
     });
   });
 });

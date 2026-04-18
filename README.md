@@ -132,15 +132,18 @@ Cloud storage URLs in virtual chunk references are automatically translated:
 
 For direct access to branches, tags, and checkouts.
 
-> **Note:** Over plain HTTP, branch and tag operations (`listBranches`,
-> `listTags`, `checkoutBranch`, etc.) only work reliably with v2 repos, which
-> embed all refs in a single repo file. V1 repos store refs as individual files
-> with versioned names that require `listPrefix()` to discover — something
-> `HttpStorage` cannot do. Use a listing-capable storage backend for v1 repos.
+> **Note:** Over plain HTTP, `listBranches()` and `listTags()` only work
+> reliably with v2 repos, which embed refs in the top-level `repo` file. For
+> v1 repos, direct `checkoutBranch()` / `checkoutTag()` can work when the
+> target ref still lives at the legacy `ref.json` path, but versioned ref
+> filenames still require `listPrefix()` discovery, which `HttpStorage` does
+> not provide. Use a listing-capable storage backend for full v1 branch/tag
+> support.
 
 ```typescript
 import { Repository, HttpStorage } from "icechunk-js";
 
+// Replace with the root URL of a real Icechunk repository.
 const storage = new HttpStorage("https://example.com/repo");
 
 // Auto-detect format (default)
