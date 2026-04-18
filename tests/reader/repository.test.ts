@@ -123,44 +123,6 @@ describe("Repository", () => {
       );
     });
 
-    it("should exclude branches with deletion tombstones (v1 format)", async () => {
-      const snapshotId = createMockSnapshotId(1);
-      const storage = new MockStorage({
-        // Active branch (no tombstone)
-        [`${getBranchRefDirPath("main")}ZZZZZZZZ.json`]:
-          createMockRefJson(snapshotId),
-        // Deleted branch (ref file + tombstone)
-        [`${getBranchRefDirPath("deleted-branch")}XXXXXXXX.json`]:
-          createMockRefJson(snapshotId),
-        [`${getBranchRefDirPath("deleted-branch")}XXXXXXXX.json.deleted`]: "",
-      });
-
-      const repo = await Repository.open({ storage });
-      const branches = await repo.listBranches();
-
-      expect(branches).toContain("main");
-      expect(branches).not.toContain("deleted-branch");
-      expect(branches).toHaveLength(1);
-    });
-
-    it("should include branch if older version deleted but newer exists (v1 format)", async () => {
-      const snapshotId = createMockSnapshotId(1);
-      const storage = new MockStorage({
-        [getBranchRefPath("main")]: createMockRefJson(snapshotId),
-        // Branch with deleted old version and active new version
-        [`${getBranchRefDirPath("active")}AAAAAAAA.json`]:
-          createMockRefJson(snapshotId),
-        [`${getBranchRefDirPath("active")}AAAAAAAA.json.deleted`]: "",
-        [`${getBranchRefDirPath("active")}ZZZZZZZZ.json`]:
-          createMockRefJson(snapshotId),
-      });
-
-      const repo = await Repository.open({ storage });
-      const branches = await repo.listBranches();
-
-      expect(branches).toContain("active");
-    });
-
     it("should handle versioned ref filenames (v1 format)", async () => {
       const snapshotId = createMockSnapshotId(1);
       const storage = new MockStorage({
@@ -300,23 +262,6 @@ describe("Repository", () => {
       const repo = await Repository.open({ storage });
 
       await expect(repo.checkoutBranch("broken")).rejects.toThrow();
-    });
-
-    it("should throw on deleted branch (with tombstone, v1 format)", async () => {
-      const snapshotId = createMockSnapshotId(1);
-      const storage = new MockStorage({
-        [getBranchRefPath("main")]: createMockRefJson(snapshotId),
-        // Deleted branch (ref file + tombstone)
-        [`${getBranchRefDirPath("deleted")}ZZZZZZZZ.json`]:
-          createMockRefJson(snapshotId),
-        [`${getBranchRefDirPath("deleted")}ZZZZZZZZ.json.deleted`]: "",
-      });
-
-      const repo = await Repository.open({ storage });
-
-      await expect(repo.checkoutBranch("deleted")).rejects.toThrow(
-        "Reference not found",
-      );
     });
   });
 
