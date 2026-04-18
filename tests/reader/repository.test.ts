@@ -318,6 +318,21 @@ describe("Repository", () => {
         "Reference not found",
       );
     });
+
+    it("should throw on deleted branch (with tombstone, v1 no-list fallback)", async () => {
+      const snapshotId = createMockSnapshotId(1);
+      const storage = new MockStorageNoList({
+        [getBranchRefPath("main")]: createMockRefJson(snapshotId),
+        [getBranchRefPath("deleted")]: createMockRefJson(snapshotId),
+        [`${getBranchRefPath("deleted")}.deleted`]: "",
+      });
+
+      const repo = await Repository.open({ storage, formatVersion: "v1" });
+
+      await expect(repo.checkoutBranch("deleted")).rejects.toThrow(
+        "Branch not found",
+      );
+    });
   });
 
   describe("checkoutTag", () => {

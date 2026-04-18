@@ -403,13 +403,21 @@ export class Repository {
 
     // V1 fallback - file-based lookup
     const refDirPath = getBranchRefDirPath(name);
-    const refPath = await this.findLatestRefFile(
-      refDirPath,
-      getBranchRefPath(name),
-    );
+    const legacyPath = getBranchRefPath(name);
+    const refPath = await this.findLatestRefFile(refDirPath, legacyPath);
     if (!refPath) {
       throw new Error(`Reference not found: ${refDirPath}`);
     }
+
+    // Check for tombstone only in no-list fallback path (list-capable storage
+    // already handles tombstones in findLatestRefFile).
+    if (
+      refPath === legacyPath &&
+      (await this.storage.exists(`${refPath}.deleted`, options))
+    ) {
+      throw new Error(`Branch not found: ${name}`);
+    }
+
     const snapshotId = await this.readSnapshotIdFromRef(refPath, options);
     return ReadSession.open(this.storage, snapshotId, options);
   }
