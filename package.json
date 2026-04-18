@@ -23,19 +23,19 @@
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
-    "clean": "rm -rf dist",
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "typecheck": "tsc --noEmit",
-    "pretest": "test -d tests/data || ./scripts/sync-fixtures.sh",
+    "pretest": "node scripts/sync.mjs --if-missing fixtures",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "prepare": "test -d tests/data || ./scripts/sync-fixtures.sh && test -d flatbuffers || ./scripts/sync-flatbuffers.sh",
-    "sync:fixtures": "./scripts/sync-fixtures.sh",
-    "sync:fbs": "./scripts/sync-flatbuffers.sh",
-    "generate:fbs": "FLATC=\"$(./scripts/ensure-flatc.sh)\" && \"$FLATC\" -T -o ./src/format/flatbuffers --gen-all ./flatbuffers/all.fbs && node scripts/postgen-fbs.cjs ./src/format/flatbuffers && prettier --write src/format/flatbuffers/generated",
-    "check:fbs": "rm -rf /tmp/fbs-check && FLATC=\"$(./scripts/ensure-flatc.sh)\" && \"$FLATC\" -T -o /tmp/fbs-check --gen-all ./flatbuffers/all.fbs && node scripts/postgen-fbs.cjs /tmp/fbs-check && prettier --write /tmp/fbs-check/generated && diff -r /tmp/fbs-check/generated src/format/flatbuffers/generated"
+    "prepare": "node scripts/sync.mjs --if-missing fixtures flatbuffers",
+    "sync:fixtures": "node scripts/sync.mjs fixtures",
+    "sync:fbs": "node scripts/sync.mjs flatbuffers",
+    "generate:fbs": "node scripts/generate-fbs.mjs",
+    "check:fbs": "node scripts/check-fbs.mjs"
   },
   "keywords": [
     "icechunk",
