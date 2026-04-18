@@ -487,41 +487,6 @@ describe("Repository", () => {
     });
   });
 
-  describe("walkHistory", () => {
-    it("should walk commit history from newest snapshot to root", async () => {
-      const storage = loadRepoIntoMockStorage(TEST_REPO_V1_PATH);
-      const repo = await Repository.open({ storage });
-      const session = await repo.checkoutBranch("main");
-
-      const entries = [];
-      for await (const entry of repo.walkHistory(session)) {
-        entries.push(entry);
-      }
-
-      expect(entries.map((entry) => entry.id)).toEqual([
-        "NXH3M0HJ7EEJ0699DPP0",
-        "7XAF0Q905SH4938DN9CG",
-        "GC4YVH5SKBPEZCENYQE0",
-        "P874YS3J196959RDHX7G",
-      ]);
-      expect(entries.map((entry) => entry.message)).toEqual([
-        "set virtual chunk",
-        "fill data",
-        "empty structure",
-        "Repository initialized",
-      ]);
-      expect(entries.map((entry) => entry.metadata)).toEqual([
-        {},
-        {},
-        {},
-        { __root: true },
-      ]);
-      expect(entries.every((entry) => entry.flushedAt instanceof Date)).toBe(
-        true,
-      );
-    });
-  });
-
   describe("v2 format integration", () => {
     it("should open a real v2 repository", async () => {
       const storage = loadRepoIntoMockStorage(TEST_REPO_V2_PATH);
@@ -584,29 +549,6 @@ describe("Repository", () => {
   });
 
   describe("walkHistory", () => {
-    /**
-     * Helper mirroring loadV2RepoIntoMockStorage for the v1 fixture,
-     * which has a real linear snapshot history suitable for walkHistory.
-     */
-    function loadV1RepoIntoMockStorage(repoPath: string): MockStorage {
-      const storage = new MockStorage({});
-
-      function loadDir(dirPath: string, prefix: string = ""): void {
-        for (const entry of readdirSync(dirPath, { withFileTypes: true })) {
-          const fullPath = join(dirPath, entry.name);
-          const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
-          if (entry.isDirectory()) {
-            loadDir(fullPath, relativePath);
-          } else {
-            storage.addFile(relativePath, readFileSync(fullPath));
-          }
-        }
-      }
-
-      loadDir(repoPath);
-      return storage;
-    }
-
     // Expected v1 fixture histories (head → root):
     const MAIN_HISTORY = [
       { id: "NXH3M0HJ7EEJ0699DPP0", message: "set virtual chunk" },
@@ -621,7 +563,7 @@ describe("Repository", () => {
     ];
 
     it("should walk linear history from branch head to root (v1)", async () => {
-      const storage = loadV1RepoIntoMockStorage(TEST_REPO_V1_PATH);
+      const storage = loadRepoIntoMockStorage(TEST_REPO_V1_PATH);
       const repo = await Repository.open({ storage });
       const session = await repo.checkoutBranch("main");
 
@@ -636,7 +578,7 @@ describe("Repository", () => {
     });
 
     it("should walk history including diverged commits on feature branch (v1)", async () => {
-      const storage = loadV1RepoIntoMockStorage(TEST_REPO_V1_PATH);
+      const storage = loadRepoIntoMockStorage(TEST_REPO_V1_PATH);
       const repo = await Repository.open({ storage });
       const session = await repo.checkoutBranch("my-branch");
 
@@ -651,7 +593,7 @@ describe("Repository", () => {
     });
 
     it("should yield entries with id, message, flushedAt, and metadata", async () => {
-      const storage = loadV1RepoIntoMockStorage(TEST_REPO_V1_PATH);
+      const storage = loadRepoIntoMockStorage(TEST_REPO_V1_PATH);
       const repo = await Repository.open({ storage });
       const session = await repo.checkoutBranch("main");
 
@@ -666,7 +608,7 @@ describe("Repository", () => {
     });
 
     it("should yield flushedAt in strictly non-increasing order", async () => {
-      const storage = loadV1RepoIntoMockStorage(TEST_REPO_V1_PATH);
+      const storage = loadRepoIntoMockStorage(TEST_REPO_V1_PATH);
       const repo = await Repository.open({ storage });
       const session = await repo.checkoutBranch("my-branch");
 
@@ -679,7 +621,7 @@ describe("Repository", () => {
     });
 
     it("should yield single entry and stop at a root snapshot", async () => {
-      const storage = loadV1RepoIntoMockStorage(TEST_REPO_V1_PATH);
+      const storage = loadRepoIntoMockStorage(TEST_REPO_V1_PATH);
       const repo = await Repository.open({ storage });
       // P874YS3J196959RDHX7G is the initial commit in the v1 fixture (parent=null)
       const rootSession = await repo.checkoutSnapshot("P874YS3J196959RDHX7G");
