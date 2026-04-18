@@ -185,7 +185,8 @@ export class Repository {
    * version has the highest filename. Deletion tombstones are checked.
    *
    * When listing is not supported (e.g., HTTP storage), only the legacy
-   * ref.json path is checked (no tombstone check - assumes read-only).
+   * ref.json path is returned (no tombstone check here). `usedLegacyFallback`
+   * signals to callers that they need to check for a tombstone themselves.
    *
    * @param dirPrefix - Directory prefix to search
    * @param legacyPath - Optional legacy ref.json path to try if listing fails
@@ -193,7 +194,7 @@ export class Repository {
   private async findLatestRefFile(
     dirPrefix: string,
     legacyPath?: string,
-  ): Promise<string | null> {
+  ): Promise<{ path: string | null; usedLegacyFallback: boolean }> {
     const jsonFiles: string[] = [];
     const deletedFiles = new Set<string>();
 
@@ -212,12 +213,12 @@ export class Repository {
         throw error;
       }
       // Listing not supported - return legacy path without checking exists.
-      // Caller will handle NotFoundError when reading.
-      return legacyPath || null;
+      // Caller is responsible for checking the tombstone on this path.
+      return { path: legacyPath || null, usedLegacyFallback: true };
     }
 
     if (jsonFiles.length === 0) {
-      return null;
+      return { path: null, usedLegacyFallback: false };
     }
 
     // Sort lexicographically and find the latest non-deleted version
@@ -226,12 +227,12 @@ export class Repository {
     // Start from the latest and find the first non-deleted file
     for (let i = jsonFiles.length - 1; i >= 0; i--) {
       if (!deletedFiles.has(jsonFiles[i])) {
-        return jsonFiles[i];
+        return { path: jsonFiles[i], usedLegacyFallback: false };
       }
     }
 
     // All versions are deleted
-    return null;
+    return { path: null, usedLegacyFallback: false };
   }
 
   /**
@@ -404,15 +405,18 @@ export class Repository {
     // V1 fallback - file-based lookup
     const refDirPath = getBranchRefDirPath(name);
     const legacyPath = getBranchRefPath(name);
-    const refPath = await this.findLatestRefFile(refDirPath, legacyPath);
+    const { path: refPath, usedLegacyFallback } = await this.findLatestRefFile(
+      refDirPath,
+      legacyPath,
+    );
     if (!refPath) {
       throw new Error(`Reference not found: ${refDirPath}`);
     }
 
-    // Check for tombstone only in no-list fallback path (list-capable storage
-    // already handles tombstones in findLatestRefFile).
+    // Tombstone check is only needed in the no-list fallback; list-capable
+    // storage already filtered tombstones inside findLatestRefFile.
     if (
-      refPath === legacyPath &&
+      usedLegacyFallback &&
       (await this.storage.exists(`${refPath}.deleted`, options))
     ) {
       throw new Error(`Branch not found: ${name}`);
@@ -446,15 +450,18 @@ export class Repository {
     // V1 fallback - file-based lookup
     const refDirPath = getTagRefDirPath(name);
     const legacyPath = getTagRefPath(name);
-    const refPath = await this.findLatestRefFile(refDirPath, legacyPath);
+    const { path: refPath, usedLegacyFallback } = await this.findLatestRefFile(
+      refDirPath,
+      legacyPath,
+    );
     if (!refPath) {
       throw new Error(`Reference not found: ${refDirPath}`);
     }
 
-    // Check for tombstone only in no-list fallback path (list-capable storage
-    // already handles tombstones in findLatestRefFile). Matches Rust behavior.
+    // Tombstone check is only needed in the no-list fallback; list-capable
+    // storage already filtered tombstones inside findLatestRefFile.
     if (
-      refPath === legacyPath &&
+      usedLegacyFallback &&
       (await this.storage.exists(`${refPath}.deleted`, options))
     ) {
       throw new Error(`Tag not found: ${name}`);
