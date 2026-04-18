@@ -16,13 +16,45 @@ import {
   getTagRefDirPath,
   REPO_INFO_PATH,
 } from "../../src/format/constants.js";
-import { encodeObjectId12 } from "../../src/format/object-id.js";
+import {
+  decodeObjectId12,
+  encodeObjectId12,
+} from "../../src/format/object-id.js";
 
 // ESM equivalent of __dirname
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // Path to v2 test repository
+const TEST_REPO_V1_PATH = join(__dirname, "../data/test-repo-v1");
 const TEST_REPO_V2_PATH = join(__dirname, "../data/test-repo-v2");
+
+/**
+ * Helper to create a MockStorage from a real repository directory.
+ * Loads all files recursively into the mock storage.
+ */
+function loadRepoIntoMockStorage(repoPath: string): MockStorage {
+  const files: Record<string, Uint8Array> = {};
+
+  function loadDir(dirPath: string, prefix: string = ""): void {
+    const entries = readdirSync(dirPath, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = join(dirPath, entry.name);
+      const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) {
+        loadDir(fullPath, relativePath);
+      } else {
+        files[relativePath] = readFileSync(fullPath);
+      }
+    }
+  }
+
+  loadDir(repoPath);
+  const storage = new MockStorage({});
+  for (const [path, data] of Object.entries(files)) {
+    storage.addFile(path, data);
+  }
+  return storage;
+}
 
 describe("Repository", () => {
   describe("open", () => {
@@ -239,6 +271,23 @@ describe("Repository", () => {
   });
 
   describe("checkoutBranch", () => {
+    it("should checkout branch via legacy ref.json when listPrefix not supported (v1 format)", async () => {
+      const snapshotId = "NXH3M0HJ7EEJ0699DPP0";
+      const storage = new MockStorageNoList({
+        [getBranchRefPath("main")]: readFileSync(
+          join(TEST_REPO_V1_PATH, getBranchRefPath("main")),
+        ),
+        [`snapshots/${snapshotId}`]: readFileSync(
+          join(TEST_REPO_V1_PATH, `snapshots/${snapshotId}`),
+        ),
+      });
+
+      const repo = await Repository.open({ storage });
+      const session = await repo.checkoutBranch("main");
+
+      expect(encodeObjectId12(session.getSnapshotId())).toBe(snapshotId);
+    });
+
     it("should throw on non-existent branch (v1 format)", async () => {
       const snapshotId = createMockSnapshotId(1);
       const storage = new MockStorage({
@@ -266,6 +315,26 @@ describe("Repository", () => {
   });
 
   describe("checkoutTag", () => {
+    it("should checkout tag via legacy ref.json when listPrefix not supported (v1 format)", async () => {
+      const snapshotId = "4QF8JA0YPDN51MHSSYVG";
+      const storage = new MockStorageNoList({
+        [getBranchRefPath("main")]: readFileSync(
+          join(TEST_REPO_V1_PATH, getBranchRefPath("main")),
+        ),
+        [getTagRefPath("it works!")]: readFileSync(
+          join(TEST_REPO_V1_PATH, getTagRefPath("it works!")),
+        ),
+        [`snapshots/${snapshotId}`]: readFileSync(
+          join(TEST_REPO_V1_PATH, `snapshots/${snapshotId}`),
+        ),
+      });
+
+      const repo = await Repository.open({ storage });
+      const session = await repo.checkoutTag("it works!");
+
+      expect(encodeObjectId12(session.getSnapshotId())).toBe(snapshotId);
+    });
+
     it("should throw on non-existent tag (v1 format)", async () => {
       const snapshotId = createMockSnapshotId(1);
       const storage = new MockStorage({
@@ -314,6 +383,27 @@ describe("Repository", () => {
   });
 
   describe("checkoutSnapshot", () => {
+    it("should checkout existing snapshot from real repository with Base32 string", async () => {
+      const storage = loadRepoIntoMockStorage(TEST_REPO_V1_PATH);
+      const repo = await Repository.open({ storage });
+      const session = await repo.checkoutSnapshot("GC4YVH5SKBPEZCENYQE0");
+
+      expect(encodeObjectId12(session.getSnapshotId())).toBe(
+        "GC4YVH5SKBPEZCENYQE0",
+      );
+      expect(session.getMessage()).toBe("empty structure");
+    });
+
+    it("should checkout existing snapshot from real repository with Uint8Array", async () => {
+      const storage = loadRepoIntoMockStorage(TEST_REPO_V1_PATH);
+      const repo = await Repository.open({ storage });
+      const snapshotId = "P874YS3J196959RDHX7G";
+      const session = await repo.checkoutSnapshot(decodeObjectId12(snapshotId));
+
+      expect(encodeObjectId12(session.getSnapshotId())).toBe(snapshotId);
+      expect(session.getMessage()).toBe("Repository initialized");
+    });
+
     it("should accept Base32 string snapshot ID", async () => {
       const snapshotId = createMockSnapshotId(42);
       const storage = new MockStorage({
@@ -343,42 +433,14 @@ describe("Repository", () => {
   });
 
   describe("v2 format integration", () => {
-    /**
-     * Helper to create a MockStorage from a real v2 repository directory.
-     * Loads all files recursively into the mock storage.
-     */
-    function loadV2RepoIntoMockStorage(repoPath: string): MockStorage {
-      const files: Record<string, Uint8Array> = {};
-
-      function loadDir(dirPath: string, prefix: string = ""): void {
-        const entries = readdirSync(dirPath, { withFileTypes: true });
-        for (const entry of entries) {
-          const fullPath = join(dirPath, entry.name);
-          const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
-          if (entry.isDirectory()) {
-            loadDir(fullPath, relativePath);
-          } else {
-            files[relativePath] = readFileSync(fullPath);
-          }
-        }
-      }
-
-      loadDir(repoPath);
-      const storage = new MockStorage({});
-      for (const [path, data] of Object.entries(files)) {
-        storage.addFile(path, data);
-      }
-      return storage;
-    }
-
     it("should open a real v2 repository", async () => {
-      const storage = loadV2RepoIntoMockStorage(TEST_REPO_V2_PATH);
+      const storage = loadRepoIntoMockStorage(TEST_REPO_V2_PATH);
       const repo = await Repository.open({ storage });
       expect(repo).toBeInstanceOf(Repository);
     });
 
     it("should list branches from real v2 repository", async () => {
-      const storage = loadV2RepoIntoMockStorage(TEST_REPO_V2_PATH);
+      const storage = loadRepoIntoMockStorage(TEST_REPO_V2_PATH);
       const repo = await Repository.open({ storage });
       const branches = await repo.listBranches();
 
@@ -387,7 +449,7 @@ describe("Repository", () => {
     });
 
     it("should list tags from real v2 repository", async () => {
-      const storage = loadV2RepoIntoMockStorage(TEST_REPO_V2_PATH);
+      const storage = loadRepoIntoMockStorage(TEST_REPO_V2_PATH);
       const repo = await Repository.open({ storage });
       const tags = await repo.listTags();
 
@@ -395,7 +457,7 @@ describe("Repository", () => {
     });
 
     it("should checkout main branch from real v2 repository", async () => {
-      const storage = loadV2RepoIntoMockStorage(TEST_REPO_V2_PATH);
+      const storage = loadRepoIntoMockStorage(TEST_REPO_V2_PATH);
       const repo = await Repository.open({ storage });
 
       // This should not throw - the branch exists and resolves to a valid snapshot
@@ -404,7 +466,7 @@ describe("Repository", () => {
     });
 
     it("should throw on non-existent branch in v2 repository", async () => {
-      const storage = loadV2RepoIntoMockStorage(TEST_REPO_V2_PATH);
+      const storage = loadRepoIntoMockStorage(TEST_REPO_V2_PATH);
       const repo = await Repository.open({ storage });
 
       await expect(repo.checkoutBranch("nonexistent")).rejects.toThrow(
@@ -413,7 +475,7 @@ describe("Repository", () => {
     });
 
     it("should throw on non-existent tag in v2 repository", async () => {
-      const storage = loadV2RepoIntoMockStorage(TEST_REPO_V2_PATH);
+      const storage = loadRepoIntoMockStorage(TEST_REPO_V2_PATH);
       const repo = await Repository.open({ storage });
 
       await expect(repo.checkoutTag("nonexistent")).rejects.toThrow(
@@ -422,12 +484,101 @@ describe("Repository", () => {
     });
 
     it("should checkout existing tag from real v2 repository", async () => {
-      const storage = loadV2RepoIntoMockStorage(TEST_REPO_V2_PATH);
+      const storage = loadRepoIntoMockStorage(TEST_REPO_V2_PATH);
       const repo = await Repository.open({ storage });
 
       // This should not throw - the tag exists and resolves to a valid snapshot
       const session = await repo.checkoutTag("it works!");
       expect(session).toBeDefined();
+    });
+  });
+
+  describe("walkHistory", () => {
+    // Expected v1 fixture histories (head → root):
+    const MAIN_HISTORY = [
+      { id: "NXH3M0HJ7EEJ0699DPP0", message: "set virtual chunk" },
+      { id: "7XAF0Q905SH4938DN9CG", message: "fill data" },
+      { id: "GC4YVH5SKBPEZCENYQE0", message: "empty structure" },
+      { id: "P874YS3J196959RDHX7G", message: "Repository initialized" },
+    ];
+    const MY_BRANCH_HISTORY = [
+      { id: "XDZ162T1TYBEJMK99NPG", message: "some more structure" },
+      { id: "4QF8JA0YPDN51MHSSYVG", message: "delete a chunk" },
+      ...MAIN_HISTORY,
+    ];
+
+    it("should walk linear history from branch head to root (v1)", async () => {
+      const storage = loadRepoIntoMockStorage(TEST_REPO_V1_PATH);
+      const repo = await Repository.open({ storage });
+      const session = await repo.checkoutBranch("main");
+
+      const entries = [];
+      for await (const entry of repo.walkHistory(session)) {
+        entries.push(entry);
+      }
+
+      expect(entries.map((e) => ({ id: e.id, message: e.message }))).toEqual(
+        MAIN_HISTORY,
+      );
+    });
+
+    it("should walk history including diverged commits on feature branch (v1)", async () => {
+      const storage = loadRepoIntoMockStorage(TEST_REPO_V1_PATH);
+      const repo = await Repository.open({ storage });
+      const session = await repo.checkoutBranch("my-branch");
+
+      const entries = [];
+      for await (const entry of repo.walkHistory(session)) {
+        entries.push(entry);
+      }
+
+      expect(entries.map((e) => ({ id: e.id, message: e.message }))).toEqual(
+        MY_BRANCH_HISTORY,
+      );
+    });
+
+    it("should yield entries with id, message, flushedAt, and metadata", async () => {
+      const storage = loadRepoIntoMockStorage(TEST_REPO_V1_PATH);
+      const repo = await Repository.open({ storage });
+      const session = await repo.checkoutBranch("main");
+
+      const iterator = repo.walkHistory(session);
+      const first = (await iterator.next()).value!;
+
+      expect(typeof first.id).toBe("string");
+      expect(first.id).toBe("NXH3M0HJ7EEJ0699DPP0");
+      expect(typeof first.message).toBe("string");
+      expect(first.flushedAt).toBeInstanceOf(Date);
+      expect(first.metadata).toBeTypeOf("object");
+    });
+
+    it("should yield flushedAt in strictly non-increasing order", async () => {
+      const storage = loadRepoIntoMockStorage(TEST_REPO_V1_PATH);
+      const repo = await Repository.open({ storage });
+      const session = await repo.checkoutBranch("my-branch");
+
+      let prev = Infinity;
+      for await (const entry of repo.walkHistory(session)) {
+        const t = entry.flushedAt.getTime();
+        expect(t).toBeLessThanOrEqual(prev);
+        prev = t;
+      }
+    });
+
+    it("should yield single entry and stop at a root snapshot", async () => {
+      const storage = loadRepoIntoMockStorage(TEST_REPO_V1_PATH);
+      const repo = await Repository.open({ storage });
+      // P874YS3J196959RDHX7G is the initial commit in the v1 fixture (parent=null)
+      const rootSession = await repo.checkoutSnapshot("P874YS3J196959RDHX7G");
+
+      const entries = [];
+      for await (const entry of repo.walkHistory(rootSession)) {
+        entries.push(entry);
+      }
+
+      expect(entries).toHaveLength(1);
+      expect(entries[0].id).toBe("P874YS3J196959RDHX7G");
+      expect(entries[0].message).toBe("Repository initialized");
     });
   });
 
