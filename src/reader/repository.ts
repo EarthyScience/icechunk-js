@@ -185,7 +185,7 @@ export class Repository {
    * version has the highest filename. Deletion tombstones are checked.
    *
    * When listing is not supported (e.g., HTTP storage), only the legacy
-   * ref.json path is checked (no tombstone check - assumes read-only).
+   * ref.json path is returned (caller must handle NotFoundError on read).
    *
    * @param dirPrefix - Directory prefix to search
    * @param legacyPath - Optional legacy ref.json path to try if listing fails
@@ -264,7 +264,10 @@ export class Repository {
           branches.add(match[1]);
         }
       }
-    } catch {
+    } catch (error) {
+      if (error instanceof AbortError) {
+        throw error;
+      }
       throw new Error("Cannot list branches: storage does not support listing");
     }
 
@@ -318,7 +321,10 @@ export class Repository {
           tagFiles.get(tagName)!.jsonFiles.push(path);
         }
       }
-    } catch {
+    } catch (error) {
+      if (error instanceof AbortError) {
+        throw error;
+      }
       throw new Error("Cannot list tags: storage does not support listing");
     }
 
