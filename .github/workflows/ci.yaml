@@ -13,7 +13,7 @@ jobs:
     strategy:
       matrix:
         node-version: [18, 20, 22]
-        zarrita-version: ["0.5", "0.6"]
+        zarrita-version: ["0.5", "0.6", "0.7"]
 
     steps:
       - uses: actions/checkout@v4
