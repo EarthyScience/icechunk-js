@@ -50,17 +50,21 @@ export class ReadSession {
   private snapshot: Snapshot;
   private specVersion: SpecVersion;
   private manifestCache: LRUCache<string, Manifest>;
+  /** VCC name → url_prefix map for resolving `vcc://` chunk locations. */
+  private virtualChunkContainers: Map<string, string>;
 
   private constructor(
     storage: Storage,
     snapshot: Snapshot,
     specVersion: SpecVersion,
     maxManifestCacheSize: number = 100,
+    virtualChunkContainers?: Map<string, string>,
   ) {
     this.storage = storage;
     this.snapshot = snapshot;
     this.specVersion = specVersion;
     this.manifestCache = new LRUCache(maxManifestCacheSize);
+    this.virtualChunkContainers = virtualChunkContainers ?? new Map();
   }
 
   /**
@@ -74,7 +78,10 @@ export class ReadSession {
   static async open(
     storage: Storage,
     snapshotId: Uint8Array,
-    options?: RequestOptions & { maxManifestCacheSize?: number },
+    options?: RequestOptions & {
+      maxManifestCacheSize?: number;
+      virtualChunkContainers?: Map<string, string>;
+    },
   ): Promise<ReadSession> {
     const { snapshot, specVersion } = await ReadSession.loadSnapshot(
       storage,
@@ -86,6 +93,7 @@ export class ReadSession {
       snapshot,
       specVersion,
       options?.maxManifestCacheSize,
+      options?.virtualChunkContainers,
     );
   }
 
@@ -442,9 +450,13 @@ export class ReadSession {
 
       case "virtual": {
         // Virtual chunks reference external URLs
-        // Translate cloud storage URLs to HTTPS endpoints
-        const httpUrl = translateToHttpUrl(
+        // Expand any vcc://name/path → absolute URL, then translate s3:// etc. → HTTPS
+        const absoluteLocation = expandVccUrl(
           payload.location,
+          this.virtualChunkContainers,
+        );
+        const httpUrl = translateToHttpUrl(
+          absoluteLocation,
           options?.azureAccount,
         );
         const headers: Record<string, string> = {
@@ -570,8 +582,12 @@ export class ReadSession {
         const absoluteStart = payload.offset + rangeStart;
         const absoluteEnd = payload.offset + rangeEnd;
 
-        const httpUrl = translateToHttpUrl(
+        const absoluteLocation = expandVccUrl(
           payload.location,
+          this.virtualChunkContainers,
+        );
+        const httpUrl = translateToHttpUrl(
+          absoluteLocation,
           options?.azureAccount,
         );
         const headers: Record<string, string> = {
@@ -691,6 +707,50 @@ function compareUtf8Bytes(a: string, b: string): number {
   }
 
   return bytesA.length - bytesB.length;
+}
+
+/** URL scheme for relative Virtual Chunk Container references. */
+const VCC_SCHEME = "vcc://";
+
+/**
+ * Expand a `vcc://name/relative/path` chunk location to an absolute URL using
+ * the repo's Virtual Chunk Container map. Pass-through for any location that
+ * doesn't start with `vcc://`.
+ *
+ * When the map is empty (e.g. a `ReadSession` constructed without a
+ * `Repository`), vcc:// locations pass through unchanged so a caller's
+ * `fetchClient` can still handle them. When the map is non-empty but the
+ * referenced name is missing, we throw — that signals a real config /
+ * manifest mismatch the caller should surface.
+ *
+ * @throws Error when the URL is malformed or the name is unknown despite a
+ *   populated container map.
+ */
+export function expandVccUrl(
+  location: string,
+  containers: Map<string, string>,
+): string {
+  if (!location.startsWith(VCC_SCHEME)) return location;
+
+  const rest = location.slice(VCC_SCHEME.length);
+  const slash = rest.indexOf("/");
+  if (slash === -1) {
+    throw new Error(
+      `Invalid vcc:// URL "${location}": missing "/" after container name`,
+    );
+  }
+
+  const name = rest.slice(0, slash);
+  const relativePath = rest.slice(slash + 1);
+  const urlPrefix = containers.get(name);
+  if (urlPrefix === undefined) {
+    if (containers.size === 0) return location;
+    throw new Error(
+      `Unknown virtual chunk container "${name}" referenced by ${location}`,
+    );
+  }
+
+  return urlPrefix + relativePath;
 }
 
 /**
