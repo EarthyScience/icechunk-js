@@ -3,7 +3,6 @@
  */
 
 import type { Storage, ByteRange, RequestOptions } from "../storage/storage.js";
-import { AbortError } from "../storage/storage.js";
 import { decompress } from "fzstd";
 import { LRUCache } from "../cache/lru.js";
 import {
@@ -307,8 +306,7 @@ export class ReadSession {
     coords: number[],
     options?: RequestOptions,
   ): Promise<Uint8Array | null> {
-    // Early abort check
-    if (options?.signal?.aborted) return null;
+    options?.signal?.throwIfAborted();
 
     const node = this.getNode(path);
     if (!node || node.nodeData.type !== "array") {
@@ -318,28 +316,22 @@ export class ReadSession {
     // Find the manifest that contains this chunk
     const arrayData = node.nodeData;
 
-    try {
-      for (const manifestRef of arrayData.manifests) {
-        // Check if this manifest covers the requested coordinates
-        if (!this.coordsInExtents(coords, manifestRef.extents)) {
-          continue;
-        }
-
-        // Load the manifest with signal
-        const manifest = await this.loadManifest(manifestRef.objectId, options);
-
-        // Find the chunk reference
-        const chunkRef = findChunkRef(manifest, node.id, coords);
-        if (!chunkRef) continue;
-
-        // Fetch the chunk data based on payload type with signal
-        const payload = getChunkPayload(chunkRef);
-        return this.fetchChunkPayload(payload, options);
+    for (const manifestRef of arrayData.manifests) {
+      // Check if this manifest covers the requested coordinates
+      if (!this.coordsInExtents(coords, manifestRef.extents)) {
+        continue;
       }
-    } catch (error) {
-      // Mid-flight abort → return null
-      if (error instanceof AbortError) return null;
-      throw error;
+
+      // Load the manifest with signal
+      const manifest = await this.loadManifest(manifestRef.objectId, options);
+
+      // Find the chunk reference
+      const chunkRef = findChunkRef(manifest, node.id, coords);
+      if (!chunkRef) continue;
+
+      // Fetch the chunk data based on payload type with signal
+      const payload = getChunkPayload(chunkRef);
+      return this.fetchChunkPayload(payload, options);
     }
 
     return null;
@@ -364,7 +356,7 @@ export class ReadSession {
     range: { offset: number; length: number } | { suffixLength: number },
     options?: RequestOptions,
   ): Promise<Uint8Array | null> {
-    if (options?.signal?.aborted) return null;
+    options?.signal?.throwIfAborted();
 
     const node = this.getNode(path);
     if (!node || node.nodeData.type !== "array") {
@@ -373,22 +365,17 @@ export class ReadSession {
 
     const arrayData = node.nodeData;
 
-    try {
-      for (const manifestRef of arrayData.manifests) {
-        if (!this.coordsInExtents(coords, manifestRef.extents)) {
-          continue;
-        }
-
-        const manifest = await this.loadManifest(manifestRef.objectId, options);
-        const chunkRef = findChunkRef(manifest, node.id, coords);
-        if (!chunkRef) continue;
-
-        const payload = getChunkPayload(chunkRef);
-        return this.fetchChunkPayloadRange(payload, range, options);
+    for (const manifestRef of arrayData.manifests) {
+      if (!this.coordsInExtents(coords, manifestRef.extents)) {
+        continue;
       }
-    } catch (error) {
-      if (error instanceof AbortError) return null;
-      throw error;
+
+      const manifest = await this.loadManifest(manifestRef.objectId, options);
+      const chunkRef = findChunkRef(manifest, node.id, coords);
+      if (!chunkRef) continue;
+
+      const payload = getChunkPayload(chunkRef);
+      return this.fetchChunkPayloadRange(payload, range, options);
     }
 
     return null;
@@ -469,19 +456,10 @@ export class ReadSession {
           signal: options?.signal,
         };
 
-        let response: Response;
-        try {
-          const client = options?.fetchClient;
-          response = client
-            ? await client.fetch(httpUrl, fetchInit)
-            : await fetch(httpUrl, fetchInit);
-        } catch (error) {
-          // Translate abort errors to our class (handles DOMException and other implementations)
-          if (error instanceof Error && error.name === "AbortError") {
-            throw new AbortError();
-          }
-          throw error;
-        }
+        const client = options?.fetchClient;
+        const response = client
+          ? await client.fetch(httpUrl, fetchInit)
+          : await fetch(httpUrl, fetchInit);
 
         if (response.status === 412) {
           throw new Error(
@@ -596,18 +574,10 @@ export class ReadSession {
           signal: options?.signal,
         };
 
-        let response: Response;
-        try {
-          const client = options?.fetchClient;
-          response = client
-            ? await client.fetch(httpUrl, fetchInit)
-            : await fetch(httpUrl, fetchInit);
-        } catch (error) {
-          if (error instanceof Error && error.name === "AbortError") {
-            throw new AbortError();
-          }
-          throw error;
-        }
+        const client = options?.fetchClient;
+        const response = client
+          ? await client.fetch(httpUrl, fetchInit)
+          : await fetch(httpUrl, fetchInit);
 
         if (response.status === 412) {
           throw new Error(

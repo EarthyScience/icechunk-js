@@ -1,10 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { HttpStorage } from "../../src/storage/http-storage.js";
-import {
-  NotFoundError,
-  StorageError,
-  AbortError,
-} from "../../src/storage/storage.js";
+import { NotFoundError, StorageError } from "../../src/storage/storage.js";
 
 describe("HttpStorage", () => {
   const originalFetch = global.fetch;
@@ -217,7 +213,7 @@ describe("HttpStorage", () => {
 
       await expect(
         storage.getObject("file.txt", undefined, { signal: controller.signal }),
-      ).rejects.toThrow(AbortError);
+      ).rejects.toMatchObject({ name: "AbortError" });
 
       // fetch should not be called
       expect(global.fetch).not.toHaveBeenCalled();
@@ -232,7 +228,7 @@ describe("HttpStorage", () => {
 
       await expect(
         storage.getObject("file.txt", undefined, { signal: controller.signal }),
-      ).rejects.toThrow(AbortError);
+      ).rejects.toBe(abortError);
     });
 
     it("should pass signal to fetch (getObject)", async () => {
@@ -262,7 +258,7 @@ describe("HttpStorage", () => {
 
       await expect(
         storage.exists("file.txt", { signal: controller.signal }),
-      ).rejects.toThrow(AbortError);
+      ).rejects.toMatchObject({ name: "AbortError" });
 
       expect(global.fetch).not.toHaveBeenCalled();
     });
@@ -276,7 +272,7 @@ describe("HttpStorage", () => {
 
       await expect(
         storage.exists("file.txt", { signal: controller.signal }),
-      ).rejects.toThrow(AbortError);
+      ).rejects.toBe(abortError);
     });
 
     it("should handle non-DOMException abort errors", async () => {
@@ -290,7 +286,7 @@ describe("HttpStorage", () => {
 
       await expect(
         storage.getObject("file.txt", undefined, { signal: controller.signal }),
-      ).rejects.toThrow(AbortError);
+      ).rejects.toBe(abortError);
     });
   });
 });

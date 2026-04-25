@@ -5,7 +5,7 @@
  */
 
 import type { Storage, ByteRange, RequestOptions } from "./storage.js";
-import { NotFoundError, StorageError, AbortError } from "./storage.js";
+import { NotFoundError, StorageError, isAbortError } from "./storage.js";
 
 /** Options for HTTP storage */
 export interface HttpStorageOptions {
@@ -65,10 +65,7 @@ export class HttpStorage implements Storage {
     range?: ByteRange,
     options?: RequestOptions,
   ): Promise<Uint8Array> {
-    // Early abort check
-    if (options?.signal?.aborted) {
-      throw new AbortError();
-    }
+    options?.signal?.throwIfAborted();
 
     const url = this.getUrl(path);
     const headers = this.getHeaders(range);
@@ -83,10 +80,7 @@ export class HttpStorage implements Storage {
         signal: options?.signal,
       });
     } catch (error) {
-      // Translate abort errors to our class (handles DOMException and other implementations)
-      if (error instanceof Error && error.name === "AbortError") {
-        throw new AbortError();
-      }
+      if (isAbortError(error)) throw error;
       throw new StorageError(
         `Failed to fetch ${url}: ${error instanceof Error ? error.message : String(error)}`,
         error instanceof Error ? error : undefined,
@@ -109,10 +103,7 @@ export class HttpStorage implements Storage {
   }
 
   async exists(path: string, options?: RequestOptions): Promise<boolean> {
-    // Early abort check
-    if (options?.signal?.aborted) {
-      throw new AbortError();
-    }
+    options?.signal?.throwIfAborted();
 
     const url = this.getUrl(path);
 
@@ -126,10 +117,7 @@ export class HttpStorage implements Storage {
 
       return response.ok;
     } catch (error) {
-      // Rethrow abort errors (handles DOMException and other implementations)
-      if (error instanceof Error && error.name === "AbortError") {
-        throw new AbortError();
-      }
+      if (isAbortError(error)) throw error;
       return false;
     }
   }

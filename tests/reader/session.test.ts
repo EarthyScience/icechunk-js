@@ -936,7 +936,7 @@ describe("ReadSession", () => {
   });
 
   describe("abort signal handling", () => {
-    it("should return null when signal is already aborted", async () => {
+    it("should reject when signal is already aborted", async () => {
       const session = createMockSession({
         nodes: [createArrayNode("/array", { manifests: [] })],
       });
@@ -944,11 +944,29 @@ describe("ReadSession", () => {
       const controller = new AbortController();
       controller.abort();
 
-      const result = await session.getChunk("/array", [0], {
-        signal: controller.signal,
+      await expect(
+        session.getChunk("/array", [0], {
+          signal: controller.signal,
+        }),
+      ).rejects.toMatchObject({ name: "AbortError" });
+    });
+
+    it("should reject range reads when signal is already aborted", async () => {
+      const session = createMockSession({
+        nodes: [createArrayNode("/array", { manifests: [] })],
       });
 
-      expect(result).toBeNull();
+      const controller = new AbortController();
+      controller.abort();
+
+      await expect(
+        session.getChunkRange(
+          "/array",
+          [0],
+          { offset: 0, length: 1 },
+          { signal: controller.signal },
+        ),
+      ).rejects.toMatchObject({ name: "AbortError" });
     });
 
     it("should return null for non-existent array (not throw)", async () => {

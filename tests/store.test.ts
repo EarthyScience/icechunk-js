@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { IcechunkStore } from "../src/store.js";
 import type { AbsolutePath } from "../src/store.js";
 import { MockStorage } from "./fixtures/mock-storage.js";
+import { NotFoundError } from "../src/storage/storage.js";
 
 /**
  * Helper to create an IcechunkStore with a mock session.
@@ -105,14 +106,39 @@ describe("IcechunkStore", () => {
     });
 
     describe("error handling", () => {
-      it("should return undefined on error", async () => {
+      it("should return undefined for NotFoundError (legitimate missing key)", async () => {
         getRawMetadataSpy.mockImplementation(() => {
-          throw new Error("Storage error");
+          throw new NotFoundError("/array/zarr.json");
         });
 
         const result = await store.get("/array/zarr.json" as AbsolutePath);
 
         expect(result).toBeUndefined();
+      });
+
+      it("should propagate non-NotFoundError failures", async () => {
+        // Swallowing these would cause zarrita's Array.getChunk to fall back
+        // to a fillValue chunk silently — downstream consumers then cache
+        // that garbage as if it were real data.
+        getRawMetadataSpy.mockImplementation(() => {
+          throw new Error("Storage error");
+        });
+
+        await expect(
+          store.get("/array/zarr.json" as AbsolutePath),
+        ).rejects.toThrow("Storage error");
+      });
+
+      it("should propagate AbortError so consumers don't cache garbage", async () => {
+        const abortErr = new Error("Operation aborted");
+        abortErr.name = "AbortError";
+        getRawMetadataSpy.mockImplementation(() => {
+          throw abortErr;
+        });
+
+        await expect(
+          store.get("/array/zarr.json" as AbsolutePath),
+        ).rejects.toThrow("Operation aborted");
       });
     });
 
@@ -271,24 +297,22 @@ describe("IcechunkStore", () => {
       expect(result).toBeUndefined();
     });
 
-    it("should return undefined when signal is already aborted", async () => {
+    it("should reject when signal is already aborted", async () => {
       const store = createStoreWithMockSession({
-        getRawMetadata: vi
-          .fn()
-          .mockReturnValue(new Uint8Array([1, 2, 3, 4, 5])),
+        getRawMetadata: vi.fn(),
         getChunk: vi.fn(),
       });
 
       const controller = new AbortController();
       controller.abort();
 
-      const result = await store.getRange(
-        "/zarr.json" as AbsolutePath,
-        { offset: 0, length: 3 },
-        { signal: controller.signal },
-      );
-
-      expect(result).toBeUndefined();
+      await expect(
+        store.getRange(
+          "/zarr.json" as AbsolutePath,
+          { offset: 0, length: 3 },
+          { signal: controller.signal },
+        ),
+      ).rejects.toMatchObject({ name: "AbortError" });
     });
   });
 
@@ -361,7 +385,7 @@ describe("IcechunkStore", () => {
   });
 
   describe("abort signal handling", () => {
-    it("should return undefined when signal is already aborted", async () => {
+    it("should reject when signal is already aborted", async () => {
       const getChunkSpy = vi.fn();
       const store = createStoreWithMockSession({
         getRawMetadata: vi.fn(),
@@ -371,11 +395,12 @@ describe("IcechunkStore", () => {
       const controller = new AbortController();
       controller.abort();
 
-      const result = await store.get("/array/c/0" as AbsolutePath, {
-        signal: controller.signal,
-      });
+      await expect(
+        store.get("/array/c/0" as AbsolutePath, {
+          signal: controller.signal,
+        }),
+      ).rejects.toMatchObject({ name: "AbortError" });
 
-      expect(result).toBeUndefined();
       expect(getChunkSpy).not.toHaveBeenCalled();
     });
 
@@ -397,7 +422,7 @@ describe("IcechunkStore", () => {
       });
     });
 
-    it("should return undefined when getChunk returns null due to abort", async () => {
+    it("should return undefined when getChunk returns null for a missing chunk", async () => {
       const getChunkSpy = vi.fn().mockResolvedValue(null);
       const store = createStoreWithMockSession({
         getRawMetadata: vi.fn(),
