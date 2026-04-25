@@ -82,14 +82,17 @@ export class StorageError extends Error {
   }
 }
 
+type ErrorWithName = { name: unknown };
+
+function hasErrorName(error: unknown): error is ErrorWithName {
+  return typeof error === "object" && error !== null && "name" in error;
+}
+
 /** True for web-platform abort errors from fetch/AbortSignal. */
-export function isAbortError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "name" in error &&
-    error.name === "AbortError"
-  );
+export function isAbortError(
+  error: unknown,
+): error is ErrorWithName & { name: "AbortError" } {
+  return hasErrorName(error) && error.name === "AbortError";
 }
 
 /**
