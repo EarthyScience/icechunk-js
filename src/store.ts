@@ -9,6 +9,7 @@ import { Repository } from "./reader/repository.js";
 import { ReadSession } from "./reader/session.js";
 import { HttpStorage } from "./storage/http-storage.js";
 import type { Storage, FetchClient } from "./storage/storage.js";
+import { NotFoundError } from "./storage/storage.js";
 import type { NodeSnapshot } from "./format/flatbuffers/types.js";
 
 /**
@@ -219,7 +220,7 @@ export class IcechunkStore implements AsyncReadable {
     key: AbsolutePath,
     opts?: { signal?: AbortSignal },
   ): Promise<Uint8Array | undefined> {
-    if (opts?.signal?.aborted) return undefined;
+    opts?.signal?.throwIfAborted();
 
     const parsed = parseZarrKey(key);
     const resolvedPath = this.resolvePath(parsed.path);
@@ -237,8 +238,15 @@ export class IcechunkStore implements AsyncReadable {
         azureAccount: this.azureAccount,
       });
       return chunk ?? undefined;
-    } catch {
-      return undefined;
+    } catch (err) {
+      // Only treat "chunk legitimately absent" as undefined. Propagate
+      // everything else — swallowing aborts/network errors here causes
+      // zarrita's Array.getChunk to return a fillValue chunk, which
+      // downstream consumers cache as valid data (e.g. zarr-layer commits
+      // it to region.data, producing permanent blank regions even after
+      // repainting).
+      if (err instanceof NotFoundError) return undefined;
+      throw err;
     }
   }
 
@@ -259,7 +267,7 @@ export class IcechunkStore implements AsyncReadable {
     range: RangeQuery,
     opts?: { signal?: AbortSignal },
   ): Promise<Uint8Array | undefined> {
-    if (opts?.signal?.aborted) return undefined;
+    opts?.signal?.throwIfAborted();
 
     const parsed = parseZarrKey(key);
     const resolvedPath = this.resolvePath(parsed.path);
@@ -289,8 +297,12 @@ export class IcechunkStore implements AsyncReadable {
         return data.slice(-range.suffixLength);
       }
       return data.slice(range.offset, range.offset + range.length);
-    } catch {
-      return undefined;
+    } catch (err) {
+      // Same rationale as `get()`: don't swallow aborts or real errors,
+      // or zarrita will silently fall back to a fillValue chunk and
+      // consumers will cache that garbage as valid data.
+      if (err instanceof NotFoundError) return undefined;
+      throw err;
     }
   }
 

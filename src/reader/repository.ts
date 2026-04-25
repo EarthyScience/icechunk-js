@@ -3,7 +3,7 @@
  */
 
 import type { Storage, RequestOptions } from "../storage/storage.js";
-import { NotFoundError, AbortError } from "../storage/storage.js";
+import { NotFoundError, isAbortError } from "../storage/storage.js";
 import {
   getBranchRefDirPath,
   getBranchRefPath,
@@ -63,7 +63,7 @@ export class Repository {
    * @param options - Optional request options (signal for cancellation)
    * @returns ParsedRepo if v2 format, null if v1 format
    * @throws Error if repo file exists but fails to parse
-   * @throws AbortError if the operation was aborted
+   * @throws An error named "AbortError" if the operation was aborted
    */
   private async loadRepoInfo(
     options?: RequestOptions,
@@ -83,7 +83,7 @@ export class Repository {
       return this.repoInfo;
     } catch (error) {
       // Propagate abort errors
-      if (error instanceof AbortError) {
+      if (isAbortError(error)) {
         this.repoInfoAttempted = false; // Allow retry
         throw error;
       }
@@ -167,7 +167,7 @@ export class Repository {
       }
     } catch (error) {
       // Propagate abort errors
-      if (error instanceof AbortError) {
+      if (isAbortError(error)) {
         throw error;
       }
       // Listing not supported - try legacy path only
@@ -208,7 +208,7 @@ export class Repository {
       }
     } catch (error) {
       // Propagate abort errors
-      if (error instanceof AbortError) {
+      if (isAbortError(error)) {
         throw error;
       }
       // Listing not supported - return legacy path without checking exists.
@@ -265,7 +265,7 @@ export class Repository {
         }
       }
     } catch (error) {
-      if (error instanceof AbortError) {
+      if (isAbortError(error)) {
         throw error;
       }
       throw new Error("Cannot list branches: storage does not support listing");
@@ -322,7 +322,7 @@ export class Repository {
         }
       }
     } catch (error) {
-      if (error instanceof AbortError) {
+      if (isAbortError(error)) {
         throw error;
       }
       throw new Error("Cannot list tags: storage does not support listing");

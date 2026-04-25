@@ -82,12 +82,17 @@ export class StorageError extends Error {
   }
 }
 
-/** Error thrown when an operation is aborted */
-export class AbortError extends Error {
-  constructor(message = "Operation aborted") {
-    super(message);
-    this.name = "AbortError";
-  }
+type ErrorWithName = { name: unknown };
+
+function hasErrorName(error: unknown): error is ErrorWithName {
+  return typeof error === "object" && error !== null && "name" in error;
+}
+
+/** True for web-platform abort errors from fetch/AbortSignal. */
+export function isAbortError(
+  error: unknown,
+): error is ErrorWithName & { name: "AbortError" } {
+  return hasErrorName(error) && error.name === "AbortError";
 }
 
 /**
@@ -105,7 +110,7 @@ export interface Storage {
    * @returns Object data as bytes
    * @throws NotFoundError if the object doesn't exist
    * @throws StorageError for other errors
-   * @throws AbortError if the operation was aborted
+   * @throws An error named "AbortError" if the operation was aborted
    */
   getObject(
     path: string,
@@ -119,7 +124,7 @@ export interface Storage {
    * @param path - Path to the object
    * @param options - Optional request options (signal for cancellation)
    * @returns True if the object exists
-   * @throws AbortError if the operation was aborted
+   * @throws An error named "AbortError" if the operation was aborted
    */
   exists(path: string, options?: RequestOptions): Promise<boolean>;
 

@@ -68,6 +68,17 @@ describe("Repository", () => {
       );
     });
 
+    it("should propagate native abort errors while opening", async () => {
+      const abortError = new DOMException("Aborted", "AbortError");
+      const storage = new (class extends MockStorage {
+        async getObject(): Promise<Uint8Array> {
+          throw abortError;
+        }
+      })();
+
+      await expect(Repository.open({ storage })).rejects.toBe(abortError);
+    });
+
     it("should open a valid v1 repository with main branch", async () => {
       const snapshotId = createMockSnapshotId(1);
       const storage = new MockStorage({
