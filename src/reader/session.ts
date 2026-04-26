@@ -50,6 +50,18 @@ import {
 const RANGE_COALESCE_SIZE = 32 * 1024;
 const RANGE_STORE_CACHE_SIZE = 256;
 
+/** Options for chunk reads from a ReadSession. */
+export interface ReadOptions extends RequestOptions {
+  /**
+   * Enable zarrita-backed range coalescing for chunk payload reads.
+   *
+   * Defaults to false. When enabled, concurrent range reads against the same
+   * backing object may be merged into one larger request, matching zarrita's
+   * `withRangeCoalescing` abort behavior for merged signals.
+   */
+  rangeCoalescing?: boolean;
+}
+
 /**
  * ReadSession provides read access to a specific snapshot.
  *
@@ -124,7 +136,10 @@ export class ReadSession {
     return promise;
   }
 
-  private getNativeStore(): Promise<AsyncReadable> {
+  private getNativeStore(options?: ReadOptions): Promise<AsyncReadable> {
+    if (!options?.rangeCoalescing) {
+      return Promise.resolve(makeStorageStore(this.storage));
+    }
     return this.getRangeStore("native", () => makeStorageStore(this.storage));
   }
 
@@ -134,7 +149,7 @@ export class ReadSession {
       checksumEtag: string | null;
       checksumLastModified: number;
     },
-    options: RequestOptions | undefined,
+    options: ReadOptions | undefined,
   ): Promise<AsyncReadable> {
     const validate = !!options?.validateChecksums;
     const conditionalHeaders: Record<string, string> = {};
@@ -153,6 +168,17 @@ export class ReadSession {
       ? `etag:${payload.checksumEtag ?? ""}::mod:${payload.checksumLastModified}`
       : "unchecked";
 
+    const createStore = () =>
+      makeUrlStore({
+        url: httpUrl,
+        fetchClient: options?.fetchClient,
+        conditionalHeaders: validate ? conditionalHeaders : undefined,
+      });
+
+    if (!options?.rangeCoalescing) {
+      return Promise.resolve(createStore());
+    }
+
     return this.getRangeStore(
       [
         "virtual",
@@ -160,12 +186,7 @@ export class ReadSession {
         `fetch:${this.getFetchClientKey(options?.fetchClient)}`,
         checksumKey,
       ].join("::"),
-      () =>
-        makeUrlStore({
-          url: httpUrl,
-          fetchClient: options?.fetchClient,
-          conditionalHeaders: validate ? conditionalHeaders : undefined,
-        }),
+      createStore,
     );
   }
 
@@ -411,9 +432,10 @@ export class ReadSession {
   async getChunk(
     path: string,
     coords: number[],
-    options?: RequestOptions,
+    options?: ReadOptions,
   ): Promise<Uint8Array | null> {
     options?.signal?.throwIfAborted();
+    const requestOptions = toRequestOptions(options);
 
     const node = this.getNode(path);
     if (!node || node.nodeData.type !== "array") {
@@ -430,7 +452,10 @@ export class ReadSession {
       }
 
       // Load the manifest with signal
-      const manifest = await this.loadManifest(manifestRef.objectId, options);
+      const manifest = await this.loadManifest(
+        manifestRef.objectId,
+        requestOptions,
+      );
 
       // Find the chunk reference
       const chunkRef = findChunkRef(manifest, node.id, coords);
@@ -461,9 +486,10 @@ export class ReadSession {
     path: string,
     coords: number[],
     range: { offset: number; length: number } | { suffixLength: number },
-    options?: RequestOptions,
+    options?: ReadOptions,
   ): Promise<Uint8Array | null> {
     options?.signal?.throwIfAborted();
+    const requestOptions = toRequestOptions(options);
 
     const node = this.getNode(path);
     if (!node || node.nodeData.type !== "array") {
@@ -477,7 +503,10 @@ export class ReadSession {
         continue;
       }
 
-      const manifest = await this.loadManifest(manifestRef.objectId, options);
+      const manifest = await this.loadManifest(
+        manifestRef.objectId,
+        requestOptions,
+      );
       const chunkRef = findChunkRef(manifest, node.id, coords);
       if (!chunkRef) continue;
 
@@ -508,7 +537,7 @@ export class ReadSession {
   /** Fetch chunk data based on payload type */
   private async fetchChunkPayload(
     payload: ChunkPayload,
-    options?: RequestOptions,
+    options?: ReadOptions,
   ): Promise<Uint8Array> {
     switch (payload.type) {
       case "inline":
@@ -516,7 +545,7 @@ export class ReadSession {
 
       case "native": {
         const path = getChunkPath(encodeObjectId12(payload.chunkId));
-        const store = await this.getNativeStore();
+        const store = await this.getNativeStore(options);
         const data = await store.getRange(
           path,
           { offset: payload.offset, length: payload.length },
@@ -571,7 +600,7 @@ export class ReadSession {
   private async fetchChunkPayloadRange(
     payload: ChunkPayload,
     range: { offset: number; length: number } | { suffixLength: number },
-    options?: RequestOptions,
+    options?: ReadOptions,
   ): Promise<Uint8Array> {
     // Compute absolute start/end within the chunk's data
     let rangeStart: number;
@@ -596,7 +625,7 @@ export class ReadSession {
       case "native": {
         const path = getChunkPath(encodeObjectId12(payload.chunkId));
         const expectedSize = rangeEnd - rangeStart;
-        const store = await this.getNativeStore();
+        const store = await this.getNativeStore(options);
         const data = await store.getRange(
           path,
           { offset: payload.offset + rangeStart, length: expectedSize },
@@ -673,6 +702,22 @@ export class ReadSession {
 
 /** UTF-8 encoder for byte comparisons */
 const utf8Encoder = new TextEncoder();
+
+function toRequestOptions(options?: ReadOptions): RequestOptions | undefined {
+  if (!options) return undefined;
+
+  const requestOptions: RequestOptions = {};
+  if (options.signal) requestOptions.signal = options.signal;
+  if (options.fetchClient) requestOptions.fetchClient = options.fetchClient;
+  if (options.validateChecksums !== undefined) {
+    requestOptions.validateChecksums = options.validateChecksums;
+  }
+  if (options.azureAccount !== undefined) {
+    requestOptions.azureAccount = options.azureAccount;
+  }
+
+  return Object.keys(requestOptions).length > 0 ? requestOptions : undefined;
+}
 
 /**
  * Compare two strings by UTF-8 byte order to match Rust's str::cmp.

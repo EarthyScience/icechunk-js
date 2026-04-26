@@ -28,6 +28,7 @@ export type {
 export { Repository } from "./reader/repository.js";
 export type { RepositoryOptions, RefData } from "./reader/repository.js";
 export { ReadSession } from "./reader/session.js";
+export type { ReadOptions } from "./reader/session.js";
 
 // Storage backends
 export { HttpStorage } from "./storage/http-storage.js";

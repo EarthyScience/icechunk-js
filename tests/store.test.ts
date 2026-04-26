@@ -7,13 +7,19 @@ import { NotFoundError } from "../src/storage/storage.js";
 /**
  * Helper to create an IcechunkStore with a mock session.
  */
-function createStoreWithMockSession(mockSession: {
-  getRawMetadata: ReturnType<typeof vi.fn>;
-  getChunk: ReturnType<typeof vi.fn>;
-  getChunkRange?: ReturnType<typeof vi.fn>;
-}): IcechunkStore {
+function createStoreWithMockSession(
+  mockSession: {
+    getRawMetadata: ReturnType<typeof vi.fn>;
+    getChunk: ReturnType<typeof vi.fn>;
+    getChunkRange?: ReturnType<typeof vi.fn>;
+  },
+  options: { rangeCoalescing?: boolean } = {},
+): IcechunkStore {
   const store = Object.create(IcechunkStore.prototype);
   store.session = mockSession;
+  if (options.rangeCoalescing !== undefined) {
+    store.rangeCoalescing = options.rangeCoalescing;
+  }
   return store;
 }
 
@@ -94,6 +100,25 @@ describe("IcechunkStore", () => {
           signal: undefined,
         });
         expect(result).toEqual(new Uint8Array([100]));
+      });
+
+      it("should pass rangeCoalescing through when enabled", async () => {
+        getChunkSpy.mockResolvedValue(new Uint8Array([10]));
+        store = createStoreWithMockSession(
+          {
+            getRawMetadata: getRawMetadataSpy,
+            getChunk: getChunkSpy,
+          },
+          { rangeCoalescing: true },
+        );
+
+        await store.get("/array/c/1" as AbsolutePath);
+
+        expect(getChunkSpy).toHaveBeenCalledWith(
+          "/array",
+          [1],
+          expect.objectContaining({ rangeCoalescing: true }),
+        );
       });
 
       it("should return undefined for missing chunks", async () => {

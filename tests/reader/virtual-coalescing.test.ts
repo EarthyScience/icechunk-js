@@ -1,7 +1,7 @@
 /**
- * Virtual-chunk coalescing: verifies that when many virtual chunks share a
- * backing URL, `fetchChunkPayload`/`fetchChunkPayloadRange` collapse the
- * reads into a handful of merged Range GETs via zarrita's
+ * Virtual-chunk coalescing: verifies that when enabled and many virtual
+ * chunks share a backing URL, `fetchChunkPayload`/`fetchChunkPayloadRange`
+ * collapse the reads into a handful of merged Range GETs via zarrita's
  * `withRangeCoalescing`.
  *
  * These tests only run when the installed zarrita exports
@@ -110,6 +110,8 @@ function makeBacking(size: number): Uint8Array {
   return data;
 }
 
+const coalescingOptions = { rangeCoalescing: true };
+
 async function waitUntil(
   condition: () => boolean,
   message: string,
@@ -122,6 +124,31 @@ async function waitUntil(
 }
 
 describe("Virtual chunk coalescing", () => {
+  it("does not coalesce virtual reads unless range coalescing is enabled", async () => {
+    const backing = makeBacking(1024);
+    const fetchSpy = spyFetchEchoingBacking(backing);
+    const session = createMockSession();
+    const url = "https://example.com/default.bin";
+
+    const [a, b, c] = await Promise.all([
+      session.fetchChunkPayload(virtualPayload(url, 0, 10)),
+      session.fetchChunkPayload(virtualPayload(url, 20, 10)),
+      session.fetchChunkPayload(virtualPayload(url, 40, 10)),
+    ]);
+
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+    expect(
+      fetchSpy.mock.calls.map(
+        (call) => (call[1]!.headers as Record<string, string>).Range,
+      ),
+    ).toEqual(["bytes=0-9", "bytes=20-29", "bytes=40-49"]);
+    expect(a).toEqual(backing.slice(0, 10));
+    expect(b).toEqual(backing.slice(20, 30));
+    expect(c).toEqual(backing.slice(40, 50));
+
+    fetchSpy.mockRestore();
+  });
+
   itWithRangeCoalescing(
     "merges concurrent same-URL reads within the gap threshold into one fetch",
     async () => {
@@ -131,9 +158,18 @@ describe("Virtual chunk coalescing", () => {
       const url = "https://example.com/data.bin";
 
       const [a, b, c] = await Promise.all([
-        session.fetchChunkPayload(virtualPayload(url, 0, 10)),
-        session.fetchChunkPayload(virtualPayload(url, 20, 10)),
-        session.fetchChunkPayload(virtualPayload(url, 40, 10)),
+        session.fetchChunkPayload(
+          virtualPayload(url, 0, 10),
+          coalescingOptions,
+        ),
+        session.fetchChunkPayload(
+          virtualPayload(url, 20, 10),
+          coalescingOptions,
+        ),
+        session.fetchChunkPayload(
+          virtualPayload(url, 40, 10),
+          coalescingOptions,
+        ),
       ]);
 
       // One merged GET instead of three individual ones.
@@ -165,8 +201,14 @@ describe("Virtual chunk coalescing", () => {
       const url = "https://example.com/sparse.bin";
 
       const [near, far] = await Promise.all([
-        session.fetchChunkPayload(virtualPayload(url, 0, 100)),
-        session.fetchChunkPayload(virtualPayload(url, 100_000, 100)),
+        session.fetchChunkPayload(
+          virtualPayload(url, 0, 100),
+          coalescingOptions,
+        ),
+        session.fetchChunkPayload(
+          virtualPayload(url, 100_000, 100),
+          coalescingOptions,
+        ),
       ]);
 
       // Past the gap threshold → two separate HTTP fetches.
@@ -189,8 +231,14 @@ describe("Virtual chunk coalescing", () => {
       const urlB = "https://example.com/b.bin";
 
       const [a, b] = await Promise.all([
-        session.fetchChunkPayload(virtualPayload(urlA, 0, 32)),
-        session.fetchChunkPayload(virtualPayload(urlB, 0, 32)),
+        session.fetchChunkPayload(
+          virtualPayload(urlA, 0, 32),
+          coalescingOptions,
+        ),
+        session.fetchChunkPayload(
+          virtualPayload(urlB, 0, 32),
+          coalescingOptions,
+        ),
       ]);
 
       expect(fetchSpy).toHaveBeenCalledTimes(2);
@@ -214,11 +262,11 @@ describe("Virtual chunk coalescing", () => {
       const [a, b] = await Promise.all([
         session.fetchChunkPayload(
           virtualPayload(url, 0, 10, { etag: '"v1"' }),
-          { validateChecksums: true },
+          { validateChecksums: true, rangeCoalescing: true },
         ),
         session.fetchChunkPayload(
           virtualPayload(url, 20, 10, { etag: '"v2"' }),
-          { validateChecksums: true },
+          { validateChecksums: true, rangeCoalescing: true },
         ),
       ]);
 
@@ -251,11 +299,11 @@ describe("Virtual chunk coalescing", () => {
       const [a, b] = await Promise.all([
         session.fetchChunkPayload(
           virtualPayload(url, 0, 10, { etag, lastModified }),
-          { validateChecksums: true },
+          { validateChecksums: true, rangeCoalescing: true },
         ),
         session.fetchChunkPayload(
           virtualPayload(url, 16, 10, { etag, lastModified }),
-          { validateChecksums: true },
+          { validateChecksums: true, rangeCoalescing: true },
         ),
       ]);
 
@@ -290,10 +338,12 @@ describe("Virtual chunk coalescing", () => {
         session.fetchChunkPayloadRange(
           virtualPayload(url, 100, 50),
           { offset: 10, length: 20 }, // absolute 110..129
+          coalescingOptions,
         ),
         session.fetchChunkPayloadRange(
           virtualPayload(url, 200, 50),
           { offset: 5, length: 10 }, // absolute 205..214
+          coalescingOptions,
         ),
       ]);
 
@@ -334,9 +384,11 @@ describe("Virtual chunk coalescing", () => {
 
     await session.fetchChunkPayload(virtualPayload(url, 0, 10), {
       fetchClient: clientA,
+      rangeCoalescing: true,
     });
     await session.fetchChunkPayload(virtualPayload(url, 20, 10), {
       fetchClient: clientB,
+      rangeCoalescing: true,
     });
 
     expect(clientA.fetch).toHaveBeenCalledTimes(1);
@@ -360,9 +412,11 @@ describe("Virtual chunk coalescing", () => {
       const [a, b] = await Promise.all([
         session.fetchChunkPayload(virtualPayload(url, 0, 10), {
           signal: controllerA.signal,
+          rangeCoalescing: true,
         }),
         session.fetchChunkPayload(virtualPayload(url, 20, 10), {
           signal: controllerB.signal,
+          rangeCoalescing: true,
         }),
       ]);
 
@@ -422,6 +476,7 @@ describe("Virtual chunk coalescing", () => {
 
       const promiseA = session.fetchChunkPayload(virtualPayload(url, 0, 10), {
         signal: controllerA.signal,
+        rangeCoalescing: true,
       });
       const rejectedA = promiseA.then(
         () => {
@@ -432,6 +487,7 @@ describe("Virtual chunk coalescing", () => {
 
       const promiseB = session.fetchChunkPayload(virtualPayload(url, 20, 10), {
         signal: controllerB.signal,
+        rangeCoalescing: true,
       });
       const rejectedB = promiseB.then(
         () => {
@@ -473,8 +529,16 @@ describe("Virtual chunk coalescing", () => {
       };
 
       const [a, b] = await Promise.all([
-        session.fetchChunkPayloadRange(payload, { offset: 0, length: 10 }),
-        session.fetchChunkPayloadRange(payload, { offset: 20, length: 10 }),
+        session.fetchChunkPayloadRange(
+          payload,
+          { offset: 0, length: 10 },
+          coalescingOptions,
+        ),
+        session.fetchChunkPayloadRange(
+          payload,
+          { offset: 20, length: 10 },
+          coalescingOptions,
+        ),
       ]);
 
       expect(getObjectSpy).toHaveBeenCalledTimes(1);
@@ -508,12 +572,12 @@ describe("Virtual chunk coalescing", () => {
         session.fetchChunkPayloadRange(
           payload,
           { offset: 0, length: 10 },
-          { signal: controllerA.signal },
+          { signal: controllerA.signal, rangeCoalescing: true },
         ),
         session.fetchChunkPayloadRange(
           payload,
           { offset: 20, length: 10 },
-          { signal: controllerB.signal },
+          { signal: controllerB.signal, rangeCoalescing: true },
         ),
       ]);
 
