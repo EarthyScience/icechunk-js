@@ -44,19 +44,27 @@ npm run test
 npm run typecheck
 ```
 
-To regenerate FlatBuffers TypeScript after syncing schemas, run `npm run generate:fbs`.
-The pinned `flatc` compiler is downloaded automatically if not already available.
-The version is set in `scripts/ensure-flatc.sh`.
+To regenerate FlatBuffers TypeScript after syncing schemas, run
+`npm run generate:fbs`. The pinned `flatc` compiler is downloaded automatically
+if not already available. The version is set in `scripts/ensure-flatc.sh`.
 
 ## API
 
 ### IcechunkStore
 
 The main class for zarrita integration. Implements zarrita's `AsyncReadable`
-interface with both `get()` and `getRange()` (needed for sharded arrays).
+interface with both `get()` and `getRange()` (needed for sharded arrays). Pass
+zarrita's `withRangeCoalescing` to coalesce concurrent reads against the same
+backing object. This requires zarrita >= 0.7.
+
+> **Note:** Range coalescing uses zarrita's merged abort-signal behavior. If one
+> read in a merged batch is aborted, other reads in the same batch may also
+> reject. Avoid sharing an `AbortController` across requests that must cancel
+> independently.
 
 ```typescript
 import { IcechunkStore } from "icechunk-js";
+import { withRangeCoalescing } from "zarrita";
 
 // Open from a URL (default: branch "main")
 const store = await IcechunkStore.open("https://example.com/repo", {
@@ -65,6 +73,7 @@ const store = await IcechunkStore.open("https://example.com/repo", {
   // snapshot: 'ABC123...',
   // formatVersion: 'v1',     // skip format auto-detection for v1 repos
   // maxManifestCacheSize: 50, // LRU cache size (default: 100)
+  // withRangeCoalescing, // opt into merged range reads
   // signal: abortController.signal, // cancel initialization
   // validateChecksums: true,  // integrity headers for virtual chunks
   // azureAccount: 'myaccount', // required for az:// virtual chunks
@@ -133,12 +142,11 @@ Cloud storage URLs in virtual chunk references are automatically translated:
 For direct access to branches, tags, and checkouts.
 
 > **Note:** Over plain HTTP, `listBranches()` and `listTags()` only work
-> reliably with v2 repos, which embed refs in the top-level `repo` file. For
-> v1 repos, direct `checkoutBranch()` / `checkoutTag()` can work when the
-> target ref still lives at the legacy `ref.json` path, but versioned ref
-> filenames still require `listPrefix()` discovery, which `HttpStorage` does
-> not provide. Use a listing-capable storage backend for full v1 branch/tag
-> support.
+> reliably with v2 repos, which embed refs in the top-level `repo` file. For v1
+> repos, direct `checkoutBranch()` / `checkoutTag()` can work when the target
+> ref still lives at the legacy `ref.json` path, but versioned ref filenames
+> still require `listPrefix()` discovery, which `HttpStorage` does not provide.
+> Use a listing-capable storage backend for full v1 branch/tag support.
 
 ```typescript
 import { Repository, HttpStorage } from "icechunk-js";
