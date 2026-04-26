@@ -44,16 +44,20 @@ npm run test
 npm run typecheck
 ```
 
-To regenerate FlatBuffers TypeScript after syncing schemas, run `npm run generate:fbs`.
-The pinned `flatc` compiler is downloaded automatically if not already available.
-The version is set in `scripts/ensure-flatc.sh`.
+To regenerate FlatBuffers TypeScript after syncing schemas, run
+`npm run generate:fbs`. The pinned `flatc` compiler is downloaded automatically
+if not already available. The version is set in `scripts/ensure-flatc.sh`.
 
 ## API
 
 ### IcechunkStore
 
 The main class for zarrita integration. Implements zarrita's `AsyncReadable`
-interface with both `get()` and `getRange()` (needed for sharded arrays).
+interface with both `get()` and `getRange()` (needed for sharded arrays). When
+available, zarrita's range coalescer is used to batch concurrent range reads
+against the same backing object. Abort behavior follows zarrita: a coalesced
+request uses merged signals, so aborting one read may reject other reads in the
+same batch.
 
 ```typescript
 import { IcechunkStore } from "icechunk-js";
@@ -133,12 +137,11 @@ Cloud storage URLs in virtual chunk references are automatically translated:
 For direct access to branches, tags, and checkouts.
 
 > **Note:** Over plain HTTP, `listBranches()` and `listTags()` only work
-> reliably with v2 repos, which embed refs in the top-level `repo` file. For
-> v1 repos, direct `checkoutBranch()` / `checkoutTag()` can work when the
-> target ref still lives at the legacy `ref.json` path, but versioned ref
-> filenames still require `listPrefix()` discovery, which `HttpStorage` does
-> not provide. Use a listing-capable storage backend for full v1 branch/tag
-> support.
+> reliably with v2 repos, which embed refs in the top-level `repo` file. For v1
+> repos, direct `checkoutBranch()` / `checkoutTag()` can work when the target
+> ref still lives at the legacy `ref.json` path, but versioned ref filenames
+> still require `listPrefix()` discovery, which `HttpStorage` does not provide.
+> Use a listing-capable storage backend for full v1 branch/tag support.
 
 ```typescript
 import { Repository, HttpStorage } from "icechunk-js";

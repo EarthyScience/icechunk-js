@@ -73,6 +73,7 @@ function createMockSession(options: {
   session.snapshot = mockSnapshot;
   session.specVersion = options.specVersion ?? SpecVersion.V1_0;
   session.manifestCache = new Map();
+  session.nextFetchClientId = 1;
 
   return session;
 }
