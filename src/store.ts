@@ -11,6 +11,7 @@ import { HttpStorage } from "./storage/http-storage.js";
 import type { Storage, FetchClient } from "./storage/storage.js";
 import { NotFoundError } from "./storage/storage.js";
 import type { NodeSnapshot } from "./format/flatbuffers/types.js";
+import type { RangeCoalescingFn } from "./reader/range-coalescer.js";
 
 /**
  * zarrita's AbsolutePath type - paths must start with "/"
@@ -67,12 +68,12 @@ export interface IcechunkStoreOptions {
   maxManifestCacheSize?: number;
 
   /**
-   * Enable zarrita-backed range coalescing for chunk payload reads.
+   * Zarrita-backed range coalescing function for chunk payload reads.
    *
-   * Defaults to false. When enabled, concurrent range reads against the same
-   * backing object may be merged into one larger request.
+   * Pass `zarrita.withRangeCoalescing` to opt in. Concurrent range reads
+   * against the same backing object may be merged into one larger request.
    */
-  rangeCoalescing?: boolean;
+  withRangeCoalescing?: RangeCoalescingFn;
 
   /**
    * Send If-Match / If-Unmodified-Since headers on virtual chunk requests.
@@ -112,7 +113,7 @@ export class IcechunkStore implements AsyncReadable {
   private fetchClient?: FetchClient;
   private validateChecksums: boolean;
   private azureAccount?: string;
-  private rangeCoalescing: boolean;
+  private withRangeCoalescing?: RangeCoalescingFn;
   private basePath: string = "";
 
   private constructor(
@@ -120,7 +121,7 @@ export class IcechunkStore implements AsyncReadable {
     fetchClient?: FetchClient,
     validateChecksums?: boolean,
     azureAccount?: string,
-    rangeCoalescing?: boolean,
+    withRangeCoalescing?: RangeCoalescingFn,
   ) {
     if (!(session instanceof ReadSession)) {
       throw new Error(
@@ -131,7 +132,7 @@ export class IcechunkStore implements AsyncReadable {
     this.fetchClient = fetchClient;
     this.validateChecksums = validateChecksums ?? false;
     this.azureAccount = azureAccount;
-    this.rangeCoalescing = rangeCoalescing ?? false;
+    this.withRangeCoalescing = withRangeCoalescing;
   }
 
   /**
@@ -155,7 +156,10 @@ export class IcechunkStore implements AsyncReadable {
     session: ReadSession,
     options?: Pick<
       IcechunkStoreOptions,
-      "fetchClient" | "validateChecksums" | "azureAccount" | "rangeCoalescing"
+      | "fetchClient"
+      | "validateChecksums"
+      | "azureAccount"
+      | "withRangeCoalescing"
     >,
   ): Promise<IcechunkStore>;
 
@@ -180,7 +184,7 @@ export class IcechunkStore implements AsyncReadable {
         options.fetchClient,
         options.validateChecksums,
         options.azureAccount,
-        options.rangeCoalescing,
+        options.withRangeCoalescing,
       );
     }
 
@@ -216,7 +220,7 @@ export class IcechunkStore implements AsyncReadable {
       options.fetchClient,
       options.validateChecksums,
       options.azureAccount,
-      options.rangeCoalescing,
+      options.withRangeCoalescing,
     );
   }
 
@@ -252,7 +256,9 @@ export class IcechunkStore implements AsyncReadable {
         ...(this.fetchClient && { fetchClient: this.fetchClient }),
         validateChecksums: this.validateChecksums,
         azureAccount: this.azureAccount,
-        ...(this.rangeCoalescing && { rangeCoalescing: true }),
+        ...(this.withRangeCoalescing && {
+          withRangeCoalescing: this.withRangeCoalescing,
+        }),
       });
       return chunk ?? undefined;
     } catch (err) {
@@ -301,7 +307,9 @@ export class IcechunkStore implements AsyncReadable {
             ...(this.fetchClient && { fetchClient: this.fetchClient }),
             validateChecksums: this.validateChecksums,
             azureAccount: this.azureAccount,
-            ...(this.rangeCoalescing && { rangeCoalescing: true }),
+            ...(this.withRangeCoalescing && {
+              withRangeCoalescing: this.withRangeCoalescing,
+            }),
           },
         );
         return data ?? undefined;
@@ -348,7 +356,7 @@ export class IcechunkStore implements AsyncReadable {
       this.fetchClient,
       this.validateChecksums,
       this.azureAccount,
-      this.rangeCoalescing,
+      this.withRangeCoalescing,
     );
     const cleanPath = path.replace(/^\/+|\/+$/g, "");
     scoped.basePath = this.basePath

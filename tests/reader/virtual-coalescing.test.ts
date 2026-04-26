@@ -15,14 +15,17 @@ import { ReadSession } from "../../src/reader/session.js";
 import { MockStorage, createMockSnapshotId } from "../fixtures/mock-storage.js";
 import { SpecVersion } from "../../src/format/header.js";
 import type { Snapshot } from "../../src/format/flatbuffers/types.js";
+import type { RangeCoalescingFn } from "../../src/index.js";
 
-const hasRangeCoalescing =
-  typeof (await import("zarrita").then(
-    (mod) => (mod as Record<string, unknown>).withRangeCoalescing,
-    () => null,
-  )) === "function";
+const withRangeCoalescing = await import("zarrita").then(
+  (mod) =>
+    (mod as Record<string, unknown>).withRangeCoalescing as
+      | RangeCoalescingFn
+      | undefined,
+  () => undefined,
+);
 
-const itWithRangeCoalescing = hasRangeCoalescing ? it : it.skip;
+const itWithRangeCoalescing = withRangeCoalescing ? it : it.skip;
 
 /**
  * Minimal ReadSession with just enough wiring to drive
@@ -45,6 +48,7 @@ function createMockSession(options: { storage?: MockStorage } = {}): any {
   session.specVersion = SpecVersion.V1_0;
   session.manifestCache = new Map();
   session.nextFetchClientId = 1;
+  session.nextRangeCoalescerId = 1;
   return session;
 }
 
@@ -110,7 +114,7 @@ function makeBacking(size: number): Uint8Array {
   return data;
 }
 
-const coalescingOptions = { rangeCoalescing: true };
+const coalescingOptions = { withRangeCoalescing };
 
 async function waitUntil(
   condition: () => boolean,
@@ -147,6 +151,31 @@ describe("Virtual chunk coalescing", () => {
     expect(c).toEqual(backing.slice(40, 50));
 
     fetchSpy.mockRestore();
+  });
+
+  it("partitions cached stores by range coalescer function", async () => {
+    const session = createMockSession();
+    const url = "https://example.com/coalescer.bin";
+    const coalescerA: RangeCoalescingFn = vi.fn((store) => ({
+      ...store,
+      getRange: vi.fn(async () => new Uint8Array([1])),
+    }));
+    const coalescerB: RangeCoalescingFn = vi.fn((store) => ({
+      ...store,
+      getRange: vi.fn(async () => new Uint8Array([2])),
+    }));
+
+    const a = await session.fetchChunkPayload(virtualPayload(url, 0, 1), {
+      withRangeCoalescing: coalescerA,
+    });
+    const b = await session.fetchChunkPayload(virtualPayload(url, 0, 1), {
+      withRangeCoalescing: coalescerB,
+    });
+
+    expect(a).toEqual(new Uint8Array([1]));
+    expect(b).toEqual(new Uint8Array([2]));
+    expect(coalescerA).toHaveBeenCalledTimes(1);
+    expect(coalescerB).toHaveBeenCalledTimes(1);
   });
 
   itWithRangeCoalescing(
@@ -262,11 +291,11 @@ describe("Virtual chunk coalescing", () => {
       const [a, b] = await Promise.all([
         session.fetchChunkPayload(
           virtualPayload(url, 0, 10, { etag: '"v1"' }),
-          { validateChecksums: true, rangeCoalescing: true },
+          { validateChecksums: true, withRangeCoalescing },
         ),
         session.fetchChunkPayload(
           virtualPayload(url, 20, 10, { etag: '"v2"' }),
-          { validateChecksums: true, rangeCoalescing: true },
+          { validateChecksums: true, withRangeCoalescing },
         ),
       ]);
 
@@ -299,11 +328,11 @@ describe("Virtual chunk coalescing", () => {
       const [a, b] = await Promise.all([
         session.fetchChunkPayload(
           virtualPayload(url, 0, 10, { etag, lastModified }),
-          { validateChecksums: true, rangeCoalescing: true },
+          { validateChecksums: true, withRangeCoalescing },
         ),
         session.fetchChunkPayload(
           virtualPayload(url, 16, 10, { etag, lastModified }),
-          { validateChecksums: true, rangeCoalescing: true },
+          { validateChecksums: true, withRangeCoalescing },
         ),
       ]);
 
@@ -359,45 +388,48 @@ describe("Virtual chunk coalescing", () => {
     },
   );
 
-  it("partitions cached virtual stores by fetch client", async () => {
-    const backing = makeBacking(1024);
-    const session = createMockSession();
-    const url = "https://example.com/client.bin";
+  itWithRangeCoalescing(
+    "partitions cached virtual stores by fetch client",
+    async () => {
+      const backing = makeBacking(1024);
+      const session = createMockSession();
+      const url = "https://example.com/client.bin";
 
-    function responseFor(offset: number, length: number) {
-      const slice = backing.slice(offset, offset + length);
-      const buf = new ArrayBuffer(slice.byteLength);
-      new Uint8Array(buf).set(slice);
-      return {
-        status: 206,
-        statusText: "Partial Content",
-        arrayBuffer: vi.fn().mockResolvedValue(buf),
-      } as unknown as Response;
-    }
+      function responseFor(offset: number, length: number) {
+        const slice = backing.slice(offset, offset + length);
+        const buf = new ArrayBuffer(slice.byteLength);
+        new Uint8Array(buf).set(slice);
+        return {
+          status: 206,
+          statusText: "Partial Content",
+          arrayBuffer: vi.fn().mockResolvedValue(buf),
+        } as unknown as Response;
+      }
 
-    const clientA = {
-      fetch: vi.fn().mockResolvedValue(responseFor(0, 10)),
-    };
-    const clientB = {
-      fetch: vi.fn().mockResolvedValue(responseFor(20, 10)),
-    };
+      const clientA = {
+        fetch: vi.fn().mockResolvedValue(responseFor(0, 10)),
+      };
+      const clientB = {
+        fetch: vi.fn().mockResolvedValue(responseFor(20, 10)),
+      };
 
-    await session.fetchChunkPayload(virtualPayload(url, 0, 10), {
-      fetchClient: clientA,
-      rangeCoalescing: true,
-    });
-    await session.fetchChunkPayload(virtualPayload(url, 20, 10), {
-      fetchClient: clientB,
-      rangeCoalescing: true,
-    });
+      await session.fetchChunkPayload(virtualPayload(url, 0, 10), {
+        fetchClient: clientA,
+        withRangeCoalescing,
+      });
+      await session.fetchChunkPayload(virtualPayload(url, 20, 10), {
+        fetchClient: clientB,
+        withRangeCoalescing,
+      });
 
-    expect(clientA.fetch).toHaveBeenCalledTimes(1);
-    expect(clientB.fetch).toHaveBeenCalledTimes(1);
-    expect(clientB.fetch).toHaveBeenCalledWith(url, {
-      headers: { Range: "bytes=20-29" },
-      signal: undefined,
-    });
-  });
+      expect(clientA.fetch).toHaveBeenCalledTimes(1);
+      expect(clientB.fetch).toHaveBeenCalledTimes(1);
+      expect(clientB.fetch).toHaveBeenCalledWith(url, {
+        headers: { Range: "bytes=20-29" },
+        signal: undefined,
+      });
+    },
+  );
 
   itWithRangeCoalescing(
     "coalesces virtual reads with different abort signals using zarrita's merged signal",
@@ -412,11 +444,11 @@ describe("Virtual chunk coalescing", () => {
       const [a, b] = await Promise.all([
         session.fetchChunkPayload(virtualPayload(url, 0, 10), {
           signal: controllerA.signal,
-          rangeCoalescing: true,
+          withRangeCoalescing,
         }),
         session.fetchChunkPayload(virtualPayload(url, 20, 10), {
           signal: controllerB.signal,
-          rangeCoalescing: true,
+          withRangeCoalescing,
         }),
       ]);
 
@@ -476,7 +508,7 @@ describe("Virtual chunk coalescing", () => {
 
       const promiseA = session.fetchChunkPayload(virtualPayload(url, 0, 10), {
         signal: controllerA.signal,
-        rangeCoalescing: true,
+        withRangeCoalescing,
       });
       const rejectedA = promiseA.then(
         () => {
@@ -487,7 +519,7 @@ describe("Virtual chunk coalescing", () => {
 
       const promiseB = session.fetchChunkPayload(virtualPayload(url, 20, 10), {
         signal: controllerB.signal,
-        rangeCoalescing: true,
+        withRangeCoalescing,
       });
       const rejectedB = promiseB.then(
         () => {
@@ -572,12 +604,12 @@ describe("Virtual chunk coalescing", () => {
         session.fetchChunkPayloadRange(
           payload,
           { offset: 0, length: 10 },
-          { signal: controllerA.signal, rangeCoalescing: true },
+          { signal: controllerA.signal, withRangeCoalescing },
         ),
         session.fetchChunkPayloadRange(
           payload,
           { offset: 20, length: 10 },
-          { signal: controllerB.signal, rangeCoalescing: true },
+          { signal: controllerB.signal, withRangeCoalescing },
         ),
       ]);
 

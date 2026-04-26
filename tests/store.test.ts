@@ -3,6 +3,7 @@ import { IcechunkStore } from "../src/store.js";
 import type { AbsolutePath } from "../src/store.js";
 import { MockStorage } from "./fixtures/mock-storage.js";
 import { NotFoundError } from "../src/storage/storage.js";
+import type { RangeCoalescingFn } from "../src/index.js";
 
 /**
  * Helper to create an IcechunkStore with a mock session.
@@ -13,12 +14,12 @@ function createStoreWithMockSession(
     getChunk: ReturnType<typeof vi.fn>;
     getChunkRange?: ReturnType<typeof vi.fn>;
   },
-  options: { rangeCoalescing?: boolean } = {},
+  options: { withRangeCoalescing?: RangeCoalescingFn } = {},
 ): IcechunkStore {
   const store = Object.create(IcechunkStore.prototype);
   store.session = mockSession;
-  if (options.rangeCoalescing !== undefined) {
-    store.rangeCoalescing = options.rangeCoalescing;
+  if (options.withRangeCoalescing !== undefined) {
+    store.withRangeCoalescing = options.withRangeCoalescing;
   }
   return store;
 }
@@ -102,14 +103,15 @@ describe("IcechunkStore", () => {
         expect(result).toEqual(new Uint8Array([100]));
       });
 
-      it("should pass rangeCoalescing through when enabled", async () => {
+      it("should pass withRangeCoalescing through when enabled", async () => {
         getChunkSpy.mockResolvedValue(new Uint8Array([10]));
+        const withRangeCoalescing: RangeCoalescingFn = vi.fn((store) => store);
         store = createStoreWithMockSession(
           {
             getRawMetadata: getRawMetadataSpy,
             getChunk: getChunkSpy,
           },
-          { rangeCoalescing: true },
+          { withRangeCoalescing },
         );
 
         await store.get("/array/c/1" as AbsolutePath);
@@ -117,7 +119,7 @@ describe("IcechunkStore", () => {
         expect(getChunkSpy).toHaveBeenCalledWith(
           "/array",
           [1],
-          expect.objectContaining({ rangeCoalescing: true }),
+          expect.objectContaining({ withRangeCoalescing }),
         );
       });
 

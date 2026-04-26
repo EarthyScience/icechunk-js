@@ -1,14 +1,14 @@
 /**
- * Optional integration with zarrita's `withRangeCoalescing` (added in
- * zarrita 0.7).
+ * Adapters for zarrita's `withRangeCoalescing` (added in zarrita 0.7).
  *
  * The coalescer works over any range-readable store keyed by object path.
  * These adapters expose icechunk's two backing-object cases in that shape:
  *
  * - `makeUrlStore` fetches ranges from one external virtual-chunk URL.
  * - `makeStorageStore` fetches ranges from repository storage objects.
- * - `loadWithRangeCoalescing` detects the optional zarrita export at runtime
- *   so older supported zarrita versions keep the uncoalesced path.
+ *
+ * Callers pass `zarrita.withRangeCoalescing` into icechunk-js explicitly when
+ * they want coalescing, keeping zarrita a true optional dependency.
  */
 
 import type { FetchClient, Storage } from "../storage/storage.js";
@@ -29,36 +29,10 @@ export interface AsyncReadable {
   ): Promise<Uint8Array | undefined>;
 }
 
-type WithRangeCoalescingFn = (
+export type RangeCoalescingFn = (
   store: AsyncReadable,
   opts?: { coalesceSize?: number },
 ) => AsyncReadable;
-
-let coalescerPromise: Promise<WithRangeCoalescingFn | null> | null = null;
-
-/**
- * Resolve `zarrita.withRangeCoalescing` at runtime, caching the result.
- *
- * Returns `null` when zarrita is not installed or exports no
- * `withRangeCoalescing` (any version < 0.7). Callers that receive `null`
- * should fall back to uncoalesced fetching.
- */
-export function loadWithRangeCoalescing(): Promise<WithRangeCoalescingFn | null> {
-  if (!coalescerPromise) {
-    coalescerPromise = (async () => {
-      try {
-        const mod = (await import(
-          /* @vite-ignore */ /* webpackIgnore: true */ "zarrita"
-        )) as Record<string, unknown>;
-        const fn = mod.withRangeCoalescing;
-        return typeof fn === "function" ? (fn as WithRangeCoalescingFn) : null;
-      } catch {
-        return null;
-      }
-    })();
-  }
-  return coalescerPromise;
-}
 
 export interface MakeUrlStoreOptions {
   /** Absolute HTTP URL this store always fetches. */

@@ -42,8 +42,8 @@ import { NotFoundError } from "../storage/storage.js";
 import {
   makeStorageStore,
   makeUrlStore,
-  loadWithRangeCoalescing,
   type AsyncReadable,
+  type RangeCoalescingFn,
 } from "./range-coalescer.js";
 
 /** Default byte-gap threshold for zarrita's range coalescer (matches its own default). */
@@ -53,13 +53,13 @@ const RANGE_STORE_CACHE_SIZE = 256;
 /** Options for chunk reads from a ReadSession. */
 export interface ReadOptions extends RequestOptions {
   /**
-   * Enable zarrita-backed range coalescing for chunk payload reads.
+   * Zarrita-backed range coalescing function for chunk payload reads.
    *
-   * Defaults to false. When enabled, concurrent range reads against the same
-   * backing object may be merged into one larger request, matching zarrita's
-   * `withRangeCoalescing` abort behavior for merged signals.
+   * Pass `zarrita.withRangeCoalescing` to opt in. Concurrent range reads
+   * against the same backing object may be merged into one larger request,
+   * matching zarrita's abort behavior for merged signals.
    */
-  rangeCoalescing?: boolean;
+  withRangeCoalescing?: RangeCoalescingFn;
 }
 
 /**
@@ -88,6 +88,8 @@ export class ReadSession {
   private nativeStore?: AsyncReadable;
   private fetchClientIds?: WeakMap<FetchClient, number>;
   private nextFetchClientId = 1;
+  private rangeCoalescerIds?: WeakMap<RangeCoalescingFn, number>;
+  private nextRangeCoalescerId = 1;
 
   private constructor(
     storage: Storage,
@@ -114,30 +116,45 @@ export class ReadSession {
     return String(id);
   }
 
+  private getRangeCoalescerKey(withRangeCoalescing: RangeCoalescingFn): string {
+    if (!this.rangeCoalescerIds) this.rangeCoalescerIds = new WeakMap();
+
+    let id = this.rangeCoalescerIds.get(withRangeCoalescing);
+    if (id === undefined) {
+      id = this.nextRangeCoalescerId;
+      this.nextRangeCoalescerId = id + 1;
+      this.rangeCoalescerIds.set(withRangeCoalescing, id);
+    }
+    return String(id);
+  }
+
   private getRangeStore(
     key: string,
     createStore: () => AsyncReadable,
+    withRangeCoalescing: RangeCoalescingFn,
   ): Promise<AsyncReadable> {
     if (!this.rangeStores) {
       this.rangeStores = new LRUCache(RANGE_STORE_CACHE_SIZE);
     }
     const stores = this.rangeStores;
+    const cacheKey = JSON.stringify([
+      key,
+      ["coalescer", this.getRangeCoalescerKey(withRangeCoalescing)],
+    ]);
 
-    const cached = stores.get(key);
+    const cached = stores.get(cacheKey);
     if (cached) return cached;
 
     const raw = createStore();
-    const promise: Promise<AsyncReadable> = loadWithRangeCoalescing()
-      .then((withRangeCoalescing) =>
-        withRangeCoalescing
-          ? withRangeCoalescing(raw, { coalesceSize: RANGE_COALESCE_SIZE })
-          : raw,
+    const promise: Promise<AsyncReadable> = Promise.resolve()
+      .then(() =>
+        withRangeCoalescing(raw, { coalesceSize: RANGE_COALESCE_SIZE }),
       )
       .catch((error: unknown) => {
-        if (stores.get(key) === promise) stores.delete(key);
+        if (stores.get(cacheKey) === promise) stores.delete(cacheKey);
         throw error;
       });
-    stores.set(key, promise);
+    stores.set(cacheKey, promise);
     return promise;
   }
 
@@ -146,10 +163,11 @@ export class ReadSession {
       this.nativeStore = makeStorageStore(this.storage);
     }
     const raw = this.nativeStore;
-    if (!options?.rangeCoalescing) {
+    const withRangeCoalescing = options?.withRangeCoalescing;
+    if (!withRangeCoalescing) {
       return Promise.resolve(raw);
     }
-    return this.getRangeStore("native", () => raw);
+    return this.getRangeStore("native", () => raw, withRangeCoalescing);
   }
 
   private getVirtualStoreForPayload(
@@ -185,7 +203,8 @@ export class ReadSession {
         conditionalHeaders,
       });
 
-    if (!options?.rangeCoalescing) {
+    const withRangeCoalescing = options?.withRangeCoalescing;
+    if (!withRangeCoalescing) {
       return Promise.resolve(createStore());
     }
 
@@ -197,6 +216,7 @@ export class ReadSession {
         checksumKey,
       ]),
       createStore,
+      withRangeCoalescing,
     );
   }
 
