@@ -684,7 +684,7 @@ describe("ReadSession", () => {
       };
 
       await expect(session.fetchChunkPayload(payload)).rejects.toThrow(
-        "Storage returned 2 bytes",
+        /Storage returned 2 bytes for chunks\/.* range 3-6; expected 4 bytes/,
       );
 
       expect(getObjectSpy).toHaveBeenCalledWith(
@@ -857,7 +857,9 @@ describe("ReadSession", () => {
           offset: 1,
           length: 3,
         }),
-      ).rejects.toThrow("Storage returned 2 bytes");
+      ).rejects.toThrow(
+        /Storage returned 2 bytes for chunks\/.* range 4-6; expected 3 bytes/,
+      );
 
       expect(getObjectSpy).toHaveBeenCalledWith(
         expect.any(String),

@@ -80,11 +80,12 @@ export class ReadSession {
    * The cache key includes request-option identities that must not share one
    * coalescing queue, notably virtual fetch clients and checksum headers.
    *
-   * Stores are cached as promises populated synchronously on first use, so
+   * Promise slots are inserted synchronously on first use, so
    * concurrent requests for the same partition share one coalescing window
    * instead of racing to create parallel stores.
    */
   private rangeStores?: LRUCache<string, Promise<AsyncReadable>>;
+  private nativeStore?: AsyncReadable;
   private fetchClientIds?: WeakMap<FetchClient, number>;
   private nextFetchClientId = 1;
 
@@ -126,21 +127,29 @@ export class ReadSession {
     if (cached) return cached;
 
     const raw = createStore();
-    const promise: Promise<AsyncReadable> = loadWithRangeCoalescing().then(
-      (withRangeCoalescing) =>
+    const promise: Promise<AsyncReadable> = loadWithRangeCoalescing()
+      .then((withRangeCoalescing) =>
         withRangeCoalescing
           ? withRangeCoalescing(raw, { coalesceSize: RANGE_COALESCE_SIZE })
           : raw,
-    );
+      )
+      .catch((error: unknown) => {
+        if (stores.get(key) === promise) stores.delete(key);
+        throw error;
+      });
     stores.set(key, promise);
     return promise;
   }
 
   private getNativeStore(options?: ReadOptions): Promise<AsyncReadable> {
-    if (!options?.rangeCoalescing) {
-      return Promise.resolve(makeStorageStore(this.storage));
+    if (!this.nativeStore) {
+      this.nativeStore = makeStorageStore(this.storage);
     }
-    return this.getRangeStore("native", () => makeStorageStore(this.storage));
+    const raw = this.nativeStore;
+    if (!options?.rangeCoalescing) {
+      return Promise.resolve(raw);
+    }
+    return this.getRangeStore("native", () => raw);
   }
 
   private getVirtualStoreForPayload(
@@ -152,8 +161,9 @@ export class ReadSession {
     options: ReadOptions | undefined,
   ): Promise<AsyncReadable> {
     const validate = !!options?.validateChecksums;
-    const conditionalHeaders: Record<string, string> = {};
+    let conditionalHeaders: Record<string, string> | undefined;
     if (validate) {
+      conditionalHeaders = {};
       if (payload.checksumEtag) {
         conditionalHeaders["If-Match"] = payload.checksumEtag;
       }
@@ -165,14 +175,14 @@ export class ReadSession {
     }
 
     const checksumKey = validate
-      ? `etag:${payload.checksumEtag ?? ""}::mod:${payload.checksumLastModified}`
-      : "unchecked";
+      ? ["checked", payload.checksumEtag ?? "", payload.checksumLastModified]
+      : ["unchecked"];
 
     const createStore = () =>
       makeUrlStore({
         url: httpUrl,
         fetchClient: options?.fetchClient,
-        conditionalHeaders: validate ? conditionalHeaders : undefined,
+        conditionalHeaders,
       });
 
     if (!options?.rangeCoalescing) {
@@ -180,12 +190,12 @@ export class ReadSession {
     }
 
     return this.getRangeStore(
-      [
+      JSON.stringify([
         "virtual",
         httpUrl,
-        `fetch:${this.getFetchClientKey(options?.fetchClient)}`,
+        ["fetch", this.getFetchClientKey(options?.fetchClient)],
         checksumKey,
-      ].join("::"),
+      ]),
       createStore,
     );
   }
@@ -545,21 +555,23 @@ export class ReadSession {
 
       case "native": {
         const path = getChunkPath(encodeObjectId12(payload.chunkId));
+        const requestedStart = payload.offset;
+        const requestedEnd = payload.offset + payload.length;
         const store = await this.getNativeStore(options);
         const data = await store.getRange(
           path,
-          { offset: payload.offset, length: payload.length },
+          { offset: requestedStart, length: payload.length },
           { signal: options?.signal },
         );
         if (!data) {
           throw new Error(
-            `Failed to fetch native chunk from ${path}: empty response`,
+            `Failed to fetch native chunk from ${path} range ${requestedStart}-${requestedEnd - 1}: empty response`,
           );
         }
         if (data.length === payload.length) return data;
 
         throw new Error(
-          `Storage returned ${data.length} bytes for ${path}; expected ${payload.length} bytes`,
+          `Storage returned ${data.length} bytes for ${path} range ${requestedStart}-${requestedEnd - 1}; expected ${payload.length} bytes`,
         );
       }
 
@@ -624,22 +636,24 @@ export class ReadSession {
 
       case "native": {
         const path = getChunkPath(encodeObjectId12(payload.chunkId));
+        const requestedStart = payload.offset + rangeStart;
         const expectedSize = rangeEnd - rangeStart;
+        const requestedEnd = requestedStart + expectedSize;
         const store = await this.getNativeStore(options);
         const data = await store.getRange(
           path,
-          { offset: payload.offset + rangeStart, length: expectedSize },
+          { offset: requestedStart, length: expectedSize },
           { signal: options?.signal },
         );
         if (!data) {
           throw new Error(
-            `Failed to fetch native chunk from ${path}: empty response`,
+            `Failed to fetch native chunk from ${path} range ${requestedStart}-${requestedEnd - 1}: empty response`,
           );
         }
         if (data.length === expectedSize) return data;
 
         throw new Error(
-          `Storage returned ${data.length} bytes for ${path}; expected ${expectedSize} bytes`,
+          `Storage returned ${data.length} bytes for ${path} range ${requestedStart}-${requestedEnd - 1}; expected ${expectedSize} bytes`,
         );
       }
 
@@ -705,18 +719,16 @@ const utf8Encoder = new TextEncoder();
 
 function toRequestOptions(options?: ReadOptions): RequestOptions | undefined {
   if (!options) return undefined;
-
-  const requestOptions: RequestOptions = {};
-  if (options.signal) requestOptions.signal = options.signal;
-  if (options.fetchClient) requestOptions.fetchClient = options.fetchClient;
-  if (options.validateChecksums !== undefined) {
-    requestOptions.validateChecksums = options.validateChecksums;
-  }
-  if (options.azureAccount !== undefined) {
-    requestOptions.azureAccount = options.azureAccount;
-  }
-
-  return Object.keys(requestOptions).length > 0 ? requestOptions : undefined;
+  return {
+    ...(options.signal && { signal: options.signal }),
+    ...(options.fetchClient && { fetchClient: options.fetchClient }),
+    ...(options.validateChecksums !== undefined && {
+      validateChecksums: options.validateChecksums,
+    }),
+    ...(options.azureAccount !== undefined && {
+      azureAccount: options.azureAccount,
+    }),
+  };
 }
 
 /**

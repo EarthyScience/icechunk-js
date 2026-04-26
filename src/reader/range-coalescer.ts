@@ -139,7 +139,12 @@ export function makeUrlStore(opts: MakeUrlStoreOptions): AsyncReadable {
         );
       }
       // Suffix-length on a 200 fallback: take the trailing suffixLength bytes.
-      return data.slice(data.length - range.suffixLength);
+      if (data.length >= range.suffixLength) {
+        return data.slice(data.length - range.suffixLength);
+      }
+      throw new Error(
+        `Virtual suffix range request not honored for ${url}: need at least ${range.suffixLength} bytes for fallback slicing, got ${data.length}`,
+      );
     },
   };
 }

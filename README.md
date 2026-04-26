@@ -53,10 +53,10 @@ if not already available. The version is set in `scripts/ensure-flatc.sh`.
 ### IcechunkStore
 
 The main class for zarrita integration. Implements zarrita's `AsyncReadable`
-interface with both `get()` and `getRange()` (needed for sharded arrays).
-When available, set `rangeCoalescing: true` to use zarrita's range coalescer for
-concurrent reads against the same backing object. Abort behavior follows
-zarrita: aborting one merged read may reject other reads in the same batch.
+interface with both `get()` and `getRange()` (needed for sharded arrays). When
+using zarrita >= 0.7, set `rangeCoalescing: true` to coalesce concurrent reads
+against the same backing object. Abort behavior follows zarrita: aborting one
+merged read may reject other reads in the same batch.
 
 ```typescript
 import { IcechunkStore } from "icechunk-js";
