@@ -48,7 +48,16 @@ import {
 
 /** Default byte-gap threshold for zarrita's range coalescer (matches its own default). */
 const RANGE_COALESCE_SIZE = 32 * 1024;
+// Per-session cap on wrapped range stores. Eviction only reduces future
+// coalescing reuse for older backing objects; it does not affect read
+// correctness. 256 keeps the cache bounded while covering many active virtual
+// URLs or native objects in typical concurrent reads.
 const RANGE_STORE_CACHE_SIZE = 256;
+type RangeStoreKeyPart = string | number | null | readonly RangeStoreKeyPart[];
+
+function makeRangeStoreCacheKey(parts: readonly RangeStoreKeyPart[]): string {
+  return JSON.stringify(parts);
+}
 
 /** Options for chunk reads from a ReadSession. */
 export interface ReadOptions extends RequestOptions {
@@ -129,7 +138,7 @@ export class ReadSession {
   }
 
   private getRangeStore(
-    key: string,
+    partitionKey: readonly RangeStoreKeyPart[],
     createStore: () => AsyncReadable,
     withRangeCoalescing: RangeCoalescingFn,
   ): Promise<AsyncReadable> {
@@ -137,8 +146,8 @@ export class ReadSession {
       this.rangeStores = new LRUCache(RANGE_STORE_CACHE_SIZE);
     }
     const stores = this.rangeStores;
-    const cacheKey = JSON.stringify([
-      key,
+    const cacheKey = makeRangeStoreCacheKey([
+      ...partitionKey,
       ["coalescer", this.getRangeCoalescerKey(withRangeCoalescing)],
     ]);
 
@@ -167,7 +176,7 @@ export class ReadSession {
     if (!withRangeCoalescing) {
       return Promise.resolve(raw);
     }
-    return this.getRangeStore("native", () => raw, withRangeCoalescing);
+    return this.getRangeStore(["native"], () => raw, withRangeCoalescing);
   }
 
   private getVirtualStoreForPayload(
@@ -209,12 +218,12 @@ export class ReadSession {
     }
 
     return this.getRangeStore(
-      JSON.stringify([
+      [
         "virtual",
         httpUrl,
         ["fetch", this.getFetchClientKey(options?.fetchClient)],
         checksumKey,
-      ]),
+      ],
       createStore,
       withRangeCoalescing,
     );

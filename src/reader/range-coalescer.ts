@@ -73,10 +73,9 @@ export function makeUrlStore(opts: MakeUrlStoreOptions): AsyncReadable {
 
   return {
     async get() {
-      // Virtual chunks only ever arrive through getRange; surfacing a `get`
-      // for this store would pull the entire backing object, which is never
-      // what the caller wants.
-      return undefined;
+      throw new Error(
+        `Virtual chunk URL store for ${url} only supports ranged reads`,
+      );
     },
     async getRange(_key, range, options) {
       const headers: Record<string, string> = conditionalHeaders
@@ -154,8 +153,9 @@ export function makeStorageStore(storage: Storage): AsyncReadable {
         ? { signal: options.signal }
         : undefined;
       if ("suffixLength" in range) {
-        const data = await storage.getObject(key, undefined, storageOptions);
-        return data.slice(-range.suffixLength);
+        throw new Error(
+          `Storage suffix ranges are not supported for ${key}; convert suffixLength to offset/length before reading`,
+        );
       }
 
       const storageRange = {

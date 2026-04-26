@@ -38,6 +38,14 @@ function makeStorage(data: Uint8Array): Storage {
 }
 
 describe("range coalescer adapters", () => {
+  it("rejects full URL reads because virtual stores are range-only", async () => {
+    const store = makeUrlStore({ url: "https://example.com/data.bin" });
+
+    await expect(store.get("/")).rejects.toThrow(
+      "Virtual chunk URL store for https://example.com/data.bin only supports ranged reads",
+    );
+  });
+
   it("returns URL suffix range responses directly for 206 responses", async () => {
     const url = "https://example.com/data.bin";
     const body = new Uint8Array([7, 8, 9]);
@@ -132,5 +140,17 @@ describe("range coalescer adapters", () => {
       undefined,
     );
     expect(result).toEqual(backing.slice(2, 5));
+  });
+
+  it("rejects storage suffix ranges instead of downloading the full object", async () => {
+    const storage = makeStorage(makeBacking(10));
+    const store = makeStorageStore(storage);
+
+    await expect(
+      store.getRange("chunks/abc", { suffixLength: 3 }),
+    ).rejects.toThrow(
+      "Storage suffix ranges are not supported for chunks/abc; convert suffixLength to offset/length before reading",
+    );
+    expect(storage.getObject).not.toHaveBeenCalled();
   });
 });

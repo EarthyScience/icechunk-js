@@ -7,9 +7,12 @@
  * These tests only run when the installed zarrita exports
  * `withRangeCoalescing`. The CI matrix also runs against older zarrita
  * versions; those jobs still exercise the uncoalesced fallback path through
- * the regular virtual-chunk tests in session.test.ts.
+ * the regular virtual-chunk tests in session.test.ts. For zarrita >= 0.7,
+ * absence of `withRangeCoalescing` is a test setup failure.
  */
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, it, expect, vi } from "vitest";
 import { ReadSession } from "../../src/reader/session.js";
 import { MockStorage, createMockSnapshotId } from "../fixtures/mock-storage.js";
@@ -24,6 +27,39 @@ const withRangeCoalescing = await import("zarrita").then(
       | undefined,
   () => undefined,
 );
+
+function getInstalledZarritaVersion(): string | undefined {
+  try {
+    const packageJson = JSON.parse(
+      readFileSync(
+        join(process.cwd(), "node_modules", "zarrita", "package.json"),
+        "utf8",
+      ),
+    ) as {
+      name?: string;
+      version?: string;
+    };
+    if (packageJson.name === "zarrita") return packageJson.version;
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+function isZarrita07OrNewer(version: string | undefined): boolean {
+  const match = /^(\d+)\.(\d+)\./.exec(version ?? "");
+  if (!match) return false;
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  return major > 0 || minor >= 7;
+}
+
+const installedZarritaVersion = getInstalledZarritaVersion();
+if (!withRangeCoalescing && isZarrita07OrNewer(installedZarritaVersion)) {
+  throw new Error(
+    `Expected zarrita ${installedZarritaVersion} to export withRangeCoalescing`,
+  );
+}
 
 const itWithRangeCoalescing = withRangeCoalescing ? it : it.skip;
 
@@ -223,14 +259,12 @@ describe("Virtual chunk coalescing", () => {
     "rejects overlong 206 responses before slicing coalesced virtual reads",
     async () => {
       const backing = makeBacking(1024);
-      const fetchSpy = vi
-        .spyOn(globalThis, "fetch")
-        .mockResolvedValue({
-          ok: true,
-          status: 206,
-          statusText: "Partial Content",
-          arrayBuffer: vi.fn().mockResolvedValue(backing.buffer),
-        } as unknown as Response);
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+        ok: true,
+        status: 206,
+        statusText: "Partial Content",
+        arrayBuffer: vi.fn().mockResolvedValue(backing.buffer),
+      } as unknown as Response);
       const session = createMockSession();
       const url = "https://example.com/overlong.bin";
 
