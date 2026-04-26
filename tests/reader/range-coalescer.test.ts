@@ -57,6 +57,36 @@ describe("range coalescer adapters", () => {
     fetchSpy.mockRestore();
   });
 
+  it("rejects URL offset 206 responses with mismatched body length", async () => {
+    const url = "https://example.com/data.bin";
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(mockFetchResponse(206, new Uint8Array([0, 1, 2, 3])));
+    const store = makeUrlStore({ url });
+
+    await expect(
+      store.getRange("/", { offset: 10, length: 2 }),
+    ).rejects.toThrow(
+      "Virtual range response size mismatch for https://example.com/data.bin: expected 2 bytes, got 4",
+    );
+
+    fetchSpy.mockRestore();
+  });
+
+  it("rejects URL suffix 206 responses with mismatched body length", async () => {
+    const url = "https://example.com/data.bin";
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(mockFetchResponse(206, new Uint8Array([7, 8, 9])));
+    const store = makeUrlStore({ url });
+
+    await expect(store.getRange("/", { suffixLength: 2 })).rejects.toThrow(
+      "Virtual range response size mismatch for https://example.com/data.bin: expected 2 bytes, got 3",
+    );
+
+    fetchSpy.mockRestore();
+  });
+
   it("slices URL suffix ranges from 200 full-body fallback responses", async () => {
     const url = "https://example.com/full.bin";
     const backing = makeBacking(10);

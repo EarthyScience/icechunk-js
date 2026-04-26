@@ -220,6 +220,46 @@ describe("Virtual chunk coalescing", () => {
   );
 
   itWithRangeCoalescing(
+    "rejects overlong 206 responses before slicing coalesced virtual reads",
+    async () => {
+      const backing = makeBacking(1024);
+      const fetchSpy = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValue({
+          ok: true,
+          status: 206,
+          statusText: "Partial Content",
+          arrayBuffer: vi.fn().mockResolvedValue(backing.buffer),
+        } as unknown as Response);
+      const session = createMockSession();
+      const url = "https://example.com/overlong.bin";
+
+      await expect(
+        Promise.all([
+          session.fetchChunkPayload(
+            virtualPayload(url, 20, 10),
+            coalescingOptions,
+          ),
+          session.fetchChunkPayload(
+            virtualPayload(url, 40, 10),
+            coalescingOptions,
+          ),
+        ]),
+      ).rejects.toThrow(
+        "Virtual range response size mismatch for https://example.com/overlong.bin: expected 30 bytes, got 1024",
+      );
+
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      const [, init] = fetchSpy.mock.calls[0]!;
+      expect((init!.headers as Record<string, string>).Range).toBe(
+        "bytes=20-49",
+      );
+
+      fetchSpy.mockRestore();
+    },
+  );
+
+  itWithRangeCoalescing(
     "issues separate fetches when concurrent reads are farther apart than the 32KB coalesce gap",
     async () => {
       // 200_000-byte backing so we can place one read at 0 and another at

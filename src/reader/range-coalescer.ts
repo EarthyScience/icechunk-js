@@ -52,6 +52,10 @@ export interface MakeUrlStoreOptions {
   conditionalHeaders?: Record<string, string>;
 }
 
+function expectedRangeLength(range: RangeQuery): number {
+  return "suffixLength" in range ? range.suffixLength : range.length;
+}
+
 /**
  * Build a minimal `AsyncReadable` that services every `getRange` by
  * fetching the configured URL with the requested byte range. The zarr
@@ -98,9 +102,16 @@ export function makeUrlStore(opts: MakeUrlStoreOptions): AsyncReadable {
 
       const data = new Uint8Array(await response.arrayBuffer());
 
-      // 206 (Partial Content) is the happy path: response body is exactly
-      // the requested range. Return as-is.
-      if (response.status === 206) return data;
+      // 206 (Partial Content) is the happy path only when the response body
+      // is exactly the requested range. Coalescers slice from this buffer by
+      // offset, so accepting an overlong partial response can shift data.
+      if (response.status === 206) {
+        const expected = expectedRangeLength(range);
+        if (data.length === expected) return data;
+        throw new Error(
+          `Virtual range response size mismatch for ${url}: expected ${expected} bytes, got ${data.length}`,
+        );
+      }
 
       // 200 means the server ignored the Range header and sent the full
       // object. Slice out the requested window so callers don't have to
