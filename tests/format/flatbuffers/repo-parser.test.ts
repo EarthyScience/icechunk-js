@@ -16,6 +16,10 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // Path to v2 test repository
 const TEST_REPO_V2_PATH = join(__dirname, "../../data/test-repo-v2");
+const TEST_REPO_V2_MIGRATED_PATH = join(
+  __dirname,
+  "../../data/test-repo-v2-migrated",
+);
 
 describe("repo-parser", () => {
   describe("parseRepo", () => {
@@ -89,6 +93,29 @@ describe("repo-parser", () => {
       const snapshotId = resolveTag(repo, "nonexistent-tag");
 
       expect(snapshotId).toBeNull();
+    });
+  });
+
+  describe("virtualChunkContainers", () => {
+    it("is empty when the only container has no name", () => {
+      // test-repo-v2 is created via `ic.VirtualChunkContainer("s3://testbucket/", store)`
+      // with no `name=` argument, so its single container is unnamed (name: null)
+      // and MUST be excluded from the vcc:// resolution map.
+      const repoData = readFileSync(join(TEST_REPO_V2_PATH, "repo"));
+      const repo = parseRepo(repoData);
+      expect(repo.virtualChunkContainers.size).toBe(0);
+    });
+
+    it("includes every named container from a migrated v2 repo", () => {
+      // test-repo-v2-migrated was produced by upgrading a v1 repo, which seeds
+      // the config with the built-in named containers for each scheme.
+      const repoData = readFileSync(join(TEST_REPO_V2_MIGRATED_PATH, "repo"));
+      const repo = parseRepo(repoData);
+      expect(repo.virtualChunkContainers.get("s3")).toBe("s3://testbucket");
+      expect(repo.virtualChunkContainers.get("gcs")).toBe("gcs");
+      expect(repo.virtualChunkContainers.get("az")).toBe("az");
+      expect(repo.virtualChunkContainers.get("tigris")).toBe("tigris");
+      expect(repo.virtualChunkContainers.get("file")).toBe("file");
     });
   });
 

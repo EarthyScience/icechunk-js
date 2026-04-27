@@ -5,6 +5,7 @@
  */
 
 import { ByteBuffer } from "flatbuffers";
+import * as flexbuffers from "flatbuffers/js/flexbuffers.js";
 import { Repo as FbsRepo } from "./generated/repo.js";
 import { decompress } from "fzstd";
 import {
@@ -23,6 +24,12 @@ export interface ParsedRepo {
   repo: FbsRepo;
   specVersion: number;
   snapshotsLength: number; // Cached for bounds checking
+  /**
+   * Map of Virtual Chunk Container name → `url_prefix` for resolving
+   * relative `vcc://name/path` chunk locations. Empty when the repo has
+   * no named containers (unnamed/legacy entries are excluded).
+   */
+  virtualChunkContainers: Map<string, string>;
 }
 
 /**
@@ -60,8 +67,55 @@ export function parseRepo(data: Uint8Array): ParsedRepo {
   }
 
   const snapshotsLength = repo.snapshotsLength();
+  const virtualChunkContainers = parseVirtualChunkContainers(repo);
 
-  return { repo, specVersion, snapshotsLength };
+  return { repo, specVersion, snapshotsLength, virtualChunkContainers };
+}
+
+/**
+ * Extract named Virtual Chunk Containers from the flexbuffers-encoded
+ * RepositoryConfig on the repo table.
+ *
+ * Only containers with a non-null `name` are included — unnamed/legacy
+ * containers cannot be referenced by `vcc://` URLs.
+ *
+ * Returns an empty map when the config is absent, malformed, or has no
+ * named containers. Parsing failures are swallowed because virtual chunk
+ * resolution is a best-effort path; callers that actually hit a `vcc://`
+ * location with no matching name will surface a clear error at fetch time.
+ */
+function parseVirtualChunkContainers(repo: FbsRepo): Map<string, string> {
+  const result = new Map<string, string>();
+  const configBytes = repo.configArray();
+  if (!configBytes || configBytes.length === 0) return result;
+
+  let config: unknown;
+  try {
+    const ab = configBytes.buffer.slice(
+      configBytes.byteOffset,
+      configBytes.byteOffset + configBytes.byteLength,
+    ) as ArrayBuffer;
+    config = flexbuffers.toObject(ab);
+  } catch {
+    return result;
+  }
+
+  if (!isRecord(config)) return result;
+  const containers = config.virtual_chunk_containers;
+  if (!isRecord(containers)) return result;
+
+  for (const container of Object.values(containers)) {
+    if (!isRecord(container)) continue;
+    const { name, url_prefix: urlPrefix } = container;
+    if (typeof name !== "string" || typeof urlPrefix !== "string") continue;
+    result.set(name, urlPrefix);
+  }
+
+  return result;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /**

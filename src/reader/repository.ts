@@ -364,7 +364,10 @@ export class Repository {
       if (!snapshotId) {
         throw new Error(`Branch not found: ${name}`);
       }
-      return ReadSession.open(this.storage, snapshotId, options);
+      return ReadSession.open(this.storage, snapshotId, {
+        ...options,
+        virtualChunkContainers: repoInfo.virtualChunkContainers,
+      });
     }
 
     // V1 fallback - file-based lookup
@@ -398,7 +401,10 @@ export class Repository {
       if (!snapshotId) {
         throw new Error(`Tag not found: ${name}`);
       }
-      return ReadSession.open(this.storage, snapshotId, options);
+      return ReadSession.open(this.storage, snapshotId, {
+        ...options,
+        virtualChunkContainers: repoInfo.virtualChunkContainers,
+      });
     }
 
     // V1 fallback - file-based lookup
@@ -437,7 +443,14 @@ export class Repository {
       typeof snapshotId === "string"
         ? decodeObjectId12(snapshotId)
         : snapshotId;
-    return ReadSession.open(this.storage, id, options);
+    // Load repo info opportunistically so v2 sessions get VCC resolution;
+    // v1 repos return null here and sessions run with an empty container map.
+    const repoInfo = await this.loadRepoInfo(options);
+    const virtualChunkContainers = repoInfo?.virtualChunkContainers;
+    return ReadSession.open(this.storage, id, {
+      ...options,
+      ...(virtualChunkContainers && { virtualChunkContainers }),
+    });
   }
 
   /**
