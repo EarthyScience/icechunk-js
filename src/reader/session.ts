@@ -9,6 +9,7 @@ import type {
 } from "../storage/storage.js";
 import { decompress } from "fzstd";
 import { LRUCache } from "../cache/lru.js";
+import { singleFlight, type SingleFlight } from "../cache/single-flight.js";
 import {
   parseHeader,
   validateFileType,
@@ -85,6 +86,14 @@ export class ReadSession {
   private specVersion: SpecVersion;
   private manifestCache: LRUCache<string, Manifest>;
   /**
+   * Single-flight loader over `manifestCache`: concurrent misses for the
+   * same manifest share one fetch instead of racing N identical GETs.
+   * Critical for fan-out reads that all need the same manifest (e.g. the
+   * many parallel chunk reads issued when a renderer crosses into a new
+   * pyramid level).
+   */
+  private manifestLoader: SingleFlight<string, Manifest>;
+  /**
    * Bounded cache of `AsyncReadable`s wrapped with zarrita's range coalescer.
    * The cache key includes request-option identities that must not share one
    * coalescing queue, notably virtual fetch clients and checksum headers.
@@ -110,6 +119,7 @@ export class ReadSession {
     this.snapshot = snapshot;
     this.specVersion = specVersion;
     this.manifestCache = new LRUCache(maxManifestCacheSize);
+    this.manifestLoader = singleFlight(this.manifestCache);
   }
 
   private getFetchClientKey(fetchClient: FetchClient | undefined): string {
@@ -281,38 +291,50 @@ export class ReadSession {
     };
   }
 
-  /** Load and parse a manifest from storage */
-  private async loadManifest(
+  /**
+   * Load and parse a manifest from storage.
+   *
+   * Concurrent calls for the same manifest are coalesced through
+   * `manifestLoader` so a fan-out of chunk reads — the typical case
+   * when many tiles cross into a new pyramid level at once — issues one
+   * HTTP GET instead of one per caller. A caller's `signal` rejects only
+   * that caller's await; the shared fetch is aborted only once every
+   * active waiter has aborted.
+   */
+  private loadManifest(
     manifestId: ObjectId12,
     options?: RequestOptions,
   ): Promise<Manifest> {
     const idStr = encodeObjectId12(manifestId);
+    return this.manifestLoader.load(
+      idStr,
+      (signal) => this.fetchManifest(idStr, signal),
+      options?.signal,
+    );
+  }
 
-    // Check cache first
-    const cached = this.manifestCache.get(idStr);
-    if (cached) return cached;
-
-    // Load from storage with signal
+  /**
+   * Fetch and parse a single manifest. The `signal` here is the
+   * single-flight loader's own signal — it fires only when every waiter
+   * has aborted, so a hung manifest fetch doesn't trap later callers
+   * behind it.
+   */
+  private async fetchManifest(
+    idStr: string,
+    signal: AbortSignal,
+  ): Promise<Manifest> {
     const path = getManifestPath(idStr);
-    const data = await this.storage.getObject(path, undefined, options);
+    const data = await this.storage.getObject(path, undefined, { signal });
 
-    // Parse header
     const header = parseHeader(data);
     validateFileType(header, FileType.Manifest);
 
-    // Decompress if needed
     let flatbufferData = getDataAfterHeader(data);
     if (header.compression === CompressionAlgorithm.Zstd) {
       flatbufferData = decompress(flatbufferData);
     }
 
-    // Parse FlatBuffer
-    const manifest = parseManifest(flatbufferData);
-
-    // Cache it
-    this.manifestCache.set(idStr, manifest);
-
-    return manifest;
+    return parseManifest(flatbufferData);
   }
 
   /**
