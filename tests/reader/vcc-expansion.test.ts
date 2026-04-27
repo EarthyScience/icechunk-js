@@ -6,6 +6,7 @@ describe("expandVccUrl", () => {
     ["my-data", "s3://mybucket/some/prefix/"],
     ["gcs-data", "gs://other/"],
     ["no-slash", "s3://bucket/key"],
+    ["migrated-s3", "s3://testbucket"],
   ]);
 
   it("passes through absolute s3:// URLs unchanged", () => {
@@ -24,11 +25,15 @@ describe("expandVccUrl", () => {
     );
   });
 
-  it("concatenates literally when url_prefix lacks trailing slash", () => {
-    // Matches the upstream Rust behavior: no normalization — prefix and
-    // relative path are concatenated as-is.
+  it("normalizes url_prefix values that lack a trailing slash", () => {
     expect(expandVccUrl("vcc://no-slash/tail", containers)).toBe(
-      "s3://bucket/keytail",
+      "s3://bucket/key/tail",
+    );
+  });
+
+  it("normalizes migrated VCC prefixes before expansion", () => {
+    expect(expandVccUrl("vcc://migrated-s3/path/to/chunk", containers)).toBe(
+      "s3://testbucket/path/to/chunk",
     );
   });
 

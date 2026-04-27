@@ -833,6 +833,11 @@ const VCC_SCHEME = "vcc://";
  * referenced name is missing, we throw — that signals a real config /
  * manifest mismatch the caller should surface.
  *
+ * Persisted repo configs may contain legacy/migrated prefixes without a
+ * trailing slash. Normalize those before joining so `vcc://name/path`
+ * resolves under the configured container root instead of being appended to
+ * the last prefix segment.
+ *
  * @throws Error when the URL is malformed or the name is unknown despite a
  *   populated container map.
  */
@@ -860,7 +865,10 @@ export function expandVccUrl(
     );
   }
 
-  return urlPrefix + relativePath;
+  const normalizedPrefix = urlPrefix.endsWith("/")
+    ? urlPrefix
+    : `${urlPrefix}/`;
+  return normalizedPrefix + relativePath;
 }
 
 /**
