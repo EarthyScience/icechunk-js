@@ -15,6 +15,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it, expect, vi } from "vitest";
 import { ReadSession } from "../../src/reader/session.js";
+import { singleFlight } from "../../src/cache/single-flight.js";
 import { MockStorage, createMockSnapshotId } from "../fixtures/mock-storage.js";
 import { SpecVersion } from "../../src/format/header.js";
 import type { Snapshot } from "../../src/format/flatbuffers/types.js";
@@ -83,6 +84,7 @@ function createMockSession(options: { storage?: MockStorage } = {}): any {
   session.snapshot = snapshot;
   session.specVersion = SpecVersion.V1_0;
   session.manifestCache = new Map();
+  session.manifestLoader = singleFlight(session.manifestCache);
   session.nextFetchClientId = 1;
   session.nextRangeCoalescerId = 1;
   return session;

@@ -4,6 +4,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ReadSession } from "../../src/reader/session.js";
 import { Repository } from "../../src/reader/repository.js";
+import { singleFlight } from "../../src/cache/single-flight.js";
 import {
   MockStorage,
   createMockHeader,
@@ -24,6 +25,10 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // Path to v1 test repository (used for real-fixture snapshot/txlog tests).
 const TEST_REPO_V1_PATH = join(__dirname, "../data/test-repo-v1");
+// Split-manifest fixture: chunks of /group1/split are spread across several
+// manifests, so a full read fans out enough concurrent reads to exercise
+// the manifest single-flight path.
+const SPLIT_REPO_V1_PATH = join(__dirname, "../data/split-repo-v1");
 
 /**
  * Load a repo directory tree into a MockStorage.
@@ -73,6 +78,7 @@ function createMockSession(options: {
   session.snapshot = mockSnapshot;
   session.specVersion = options.specVersion ?? SpecVersion.V1_0;
   session.manifestCache = new Map();
+  session.manifestLoader = singleFlight(session.manifestCache);
   session.nextFetchClientId = 1;
 
   return session;
@@ -1090,6 +1096,48 @@ describe("ReadSession", () => {
 
       const txLog = await session.loadTransactionLog();
       expect(txLog).toBeNull();
+    });
+  });
+
+  describe("manifest single-flight (real fixture)", () => {
+    it("collapses concurrent chunk reads into one manifest fetch per id", async () => {
+      const storage = loadRepoIntoMockStorage(SPLIT_REPO_V1_PATH);
+      const repo = await Repository.open({ storage });
+      const session = await repo.checkoutBranch("main");
+
+      // Drop everything that came from session open (snapshot + any
+      // structural reads). We only want to assert on what subsequent
+      // chunk reads fan out to.
+      storage.clearRequestLog();
+
+      // Fire all 16 chunk reads concurrently. With dedup, each manifest
+      // touched by the array is fetched exactly once even though many
+      // chunks resolve through the same manifest.
+      const coords: [number, number][] = [];
+      for (let i = 0; i < 4; i++) {
+        for (let j = 0; j < 4; j++) {
+          coords.push([i, j]);
+        }
+      }
+      await Promise.all(
+        coords.map(([i, j]) => session.getChunk("/group1/split", [i, j])),
+      );
+
+      const manifestRequests = storage.requestLog.filter((entry) =>
+        entry.startsWith("getObject:manifests/"),
+      );
+      const counts = new Map<string, number>();
+      for (const entry of manifestRequests) {
+        counts.set(entry, (counts.get(entry) ?? 0) + 1);
+      }
+
+      expect(manifestRequests.length).toBeGreaterThan(0);
+      for (const [path, count] of counts) {
+        expect(
+          count,
+          `${path} should be fetched once but was fetched ${count} times`,
+        ).toBe(1);
+      }
     });
   });
 });
