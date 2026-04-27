@@ -2,7 +2,11 @@
  * ReadSession - Read-only session for accessing icechunk data.
  */
 
-import type { Storage, ByteRange, RequestOptions } from "../storage/storage.js";
+import type {
+  FetchClient,
+  Storage,
+  RequestOptions,
+} from "../storage/storage.js";
 import { decompress } from "fzstd";
 import { LRUCache } from "../cache/lru.js";
 import {
@@ -35,6 +39,37 @@ import {
   type TransactionLogEntry,
 } from "../format/flatbuffers/index.js";
 import { NotFoundError } from "../storage/storage.js";
+import {
+  makeStorageStore,
+  makeUrlStore,
+  type AsyncReadable,
+  type RangeCoalescingFn,
+} from "./range-coalescer.js";
+
+/** Default byte-gap threshold for zarrita's range coalescer (matches its own default). */
+const RANGE_COALESCE_SIZE = 32 * 1024;
+// Per-session cap on wrapped range stores. Eviction only reduces future
+// coalescing reuse for older backing objects; it does not affect read
+// correctness. 256 keeps the cache bounded while covering many active virtual
+// URLs or native objects in typical concurrent reads.
+const RANGE_STORE_CACHE_SIZE = 256;
+type RangeStoreKeyPart = string | number | null | readonly RangeStoreKeyPart[];
+
+function makeRangeStoreCacheKey(parts: readonly RangeStoreKeyPart[]): string {
+  return JSON.stringify(parts);
+}
+
+/** Options for chunk reads from a ReadSession. */
+export interface ReadOptions extends RequestOptions {
+  /**
+   * Zarrita-backed range coalescing function for chunk payload reads.
+   *
+   * Pass `zarrita.withRangeCoalescing` to opt in. Concurrent range reads
+   * against the same backing object may be merged into one larger request,
+   * matching zarrita's abort behavior for merged signals.
+   */
+  withRangeCoalescing?: RangeCoalescingFn;
+}
 
 /**
  * ReadSession provides read access to a specific snapshot.
@@ -49,6 +84,21 @@ export class ReadSession {
   private snapshot: Snapshot;
   private specVersion: SpecVersion;
   private manifestCache: LRUCache<string, Manifest>;
+  /**
+   * Bounded cache of `AsyncReadable`s wrapped with zarrita's range coalescer.
+   * The cache key includes request-option identities that must not share one
+   * coalescing queue, notably virtual fetch clients and checksum headers.
+   *
+   * Promise slots are inserted synchronously on first use, so
+   * concurrent requests for the same partition share one coalescing window
+   * instead of racing to create parallel stores.
+   */
+  private rangeStores?: LRUCache<string, Promise<AsyncReadable>>;
+  private nativeStore?: AsyncReadable;
+  private fetchClientIds?: WeakMap<FetchClient, number>;
+  private nextFetchClientId = 1;
+  private rangeCoalescerIds?: WeakMap<RangeCoalescingFn, number>;
+  private nextRangeCoalescerId = 1;
 
   private constructor(
     storage: Storage,
@@ -60,6 +110,123 @@ export class ReadSession {
     this.snapshot = snapshot;
     this.specVersion = specVersion;
     this.manifestCache = new LRUCache(maxManifestCacheSize);
+  }
+
+  private getFetchClientKey(fetchClient: FetchClient | undefined): string {
+    if (!fetchClient) return "default";
+    if (!this.fetchClientIds) this.fetchClientIds = new WeakMap();
+
+    let id = this.fetchClientIds.get(fetchClient);
+    if (id === undefined) {
+      id = this.nextFetchClientId;
+      this.nextFetchClientId = id + 1;
+      this.fetchClientIds.set(fetchClient, id);
+    }
+    return String(id);
+  }
+
+  private getRangeCoalescerKey(withRangeCoalescing: RangeCoalescingFn): string {
+    if (!this.rangeCoalescerIds) this.rangeCoalescerIds = new WeakMap();
+
+    let id = this.rangeCoalescerIds.get(withRangeCoalescing);
+    if (id === undefined) {
+      id = this.nextRangeCoalescerId;
+      this.nextRangeCoalescerId = id + 1;
+      this.rangeCoalescerIds.set(withRangeCoalescing, id);
+    }
+    return String(id);
+  }
+
+  private getRangeStore(
+    partitionKey: readonly RangeStoreKeyPart[],
+    createStore: () => AsyncReadable,
+    withRangeCoalescing: RangeCoalescingFn,
+  ): Promise<AsyncReadable> {
+    if (!this.rangeStores) {
+      this.rangeStores = new LRUCache(RANGE_STORE_CACHE_SIZE);
+    }
+    const stores = this.rangeStores;
+    const cacheKey = makeRangeStoreCacheKey([
+      ...partitionKey,
+      ["coalescer", this.getRangeCoalescerKey(withRangeCoalescing)],
+    ]);
+
+    const cached = stores.get(cacheKey);
+    if (cached) return cached;
+
+    const raw = createStore();
+    const promise: Promise<AsyncReadable> = Promise.resolve()
+      .then(() =>
+        withRangeCoalescing(raw, { coalesceSize: RANGE_COALESCE_SIZE }),
+      )
+      .catch((error: unknown) => {
+        if (stores.get(cacheKey) === promise) stores.delete(cacheKey);
+        throw error;
+      });
+    stores.set(cacheKey, promise);
+    return promise;
+  }
+
+  private getNativeStore(options?: ReadOptions): Promise<AsyncReadable> {
+    if (!this.nativeStore) {
+      this.nativeStore = makeStorageStore(this.storage);
+    }
+    const raw = this.nativeStore;
+    const withRangeCoalescing = options?.withRangeCoalescing;
+    if (!withRangeCoalescing) {
+      return Promise.resolve(raw);
+    }
+    return this.getRangeStore(["native"], () => raw, withRangeCoalescing);
+  }
+
+  private getVirtualStoreForPayload(
+    httpUrl: string,
+    payload: {
+      checksumEtag: string | null;
+      checksumLastModified: number;
+    },
+    options: ReadOptions | undefined,
+  ): Promise<AsyncReadable> {
+    const validate = !!options?.validateChecksums;
+    let conditionalHeaders: Record<string, string> | undefined;
+    if (validate) {
+      conditionalHeaders = {};
+      if (payload.checksumEtag) {
+        conditionalHeaders["If-Match"] = payload.checksumEtag;
+      }
+      if (payload.checksumLastModified > 0) {
+        conditionalHeaders["If-Unmodified-Since"] = new Date(
+          payload.checksumLastModified * 1000,
+        ).toUTCString();
+      }
+    }
+
+    const checksumKey = validate
+      ? ["checked", payload.checksumEtag ?? "", payload.checksumLastModified]
+      : ["unchecked"];
+
+    const createStore = () =>
+      makeUrlStore({
+        url: httpUrl,
+        fetchClient: options?.fetchClient,
+        conditionalHeaders,
+      });
+
+    const withRangeCoalescing = options?.withRangeCoalescing;
+    if (!withRangeCoalescing) {
+      return Promise.resolve(createStore());
+    }
+
+    return this.getRangeStore(
+      [
+        "virtual",
+        httpUrl,
+        ["fetch", this.getFetchClientKey(options?.fetchClient)],
+        checksumKey,
+      ],
+      createStore,
+      withRangeCoalescing,
+    );
   }
 
   /**
@@ -304,9 +471,10 @@ export class ReadSession {
   async getChunk(
     path: string,
     coords: number[],
-    options?: RequestOptions,
+    options?: ReadOptions,
   ): Promise<Uint8Array | null> {
     options?.signal?.throwIfAborted();
+    const requestOptions = toRequestOptions(options);
 
     const node = this.getNode(path);
     if (!node || node.nodeData.type !== "array") {
@@ -323,7 +491,10 @@ export class ReadSession {
       }
 
       // Load the manifest with signal
-      const manifest = await this.loadManifest(manifestRef.objectId, options);
+      const manifest = await this.loadManifest(
+        manifestRef.objectId,
+        requestOptions,
+      );
 
       // Find the chunk reference
       const chunkRef = findChunkRef(manifest, node.id, coords);
@@ -354,9 +525,10 @@ export class ReadSession {
     path: string,
     coords: number[],
     range: { offset: number; length: number } | { suffixLength: number },
-    options?: RequestOptions,
+    options?: ReadOptions,
   ): Promise<Uint8Array | null> {
     options?.signal?.throwIfAborted();
+    const requestOptions = toRequestOptions(options);
 
     const node = this.getNode(path);
     if (!node || node.nodeData.type !== "array") {
@@ -370,7 +542,10 @@ export class ReadSession {
         continue;
       }
 
-      const manifest = await this.loadManifest(manifestRef.objectId, options);
+      const manifest = await this.loadManifest(
+        manifestRef.objectId,
+        requestOptions,
+      );
       const chunkRef = findChunkRef(manifest, node.id, coords);
       if (!chunkRef) continue;
 
@@ -401,7 +576,7 @@ export class ReadSession {
   /** Fetch chunk data based on payload type */
   private async fetchChunkPayload(
     payload: ChunkPayload,
-    options?: RequestOptions,
+    options?: ReadOptions,
   ): Promise<Uint8Array> {
     switch (payload.type) {
       case "inline":
@@ -409,21 +584,23 @@ export class ReadSession {
 
       case "native": {
         const path = getChunkPath(encodeObjectId12(payload.chunkId));
-        const range: ByteRange = {
-          start: payload.offset,
-          end: payload.offset + payload.length,
-        };
-        const data = await this.storage.getObject(path, range, options);
+        const requestedStart = payload.offset;
+        const requestedEnd = payload.offset + payload.length;
+        const store = await this.getNativeStore(options);
+        const data = await store.getRange(
+          path,
+          { offset: requestedStart, length: payload.length },
+          { signal: options?.signal },
+        );
+        if (!data) {
+          throw new Error(
+            `Failed to fetch native chunk from ${path} range ${requestedStart}-${requestedEnd - 1}: empty response`,
+          );
+        }
         if (data.length === payload.length) return data;
 
-        // Range header may be ignored (e.g. HTTP 200 full body). If the full object
-        // is available, slice out the requested window explicitly.
-        if (data.length >= range.end) {
-          return data.slice(range.start, range.end);
-        }
-
         throw new Error(
-          `Storage returned ${data.length} bytes for ${path} range ${range.start}-${range.end - 1}; expected ${payload.length} bytes`,
+          `Storage returned ${data.length} bytes for ${path} range ${requestedStart}-${requestedEnd - 1}; expected ${payload.length} bytes`,
         );
       }
 
@@ -434,65 +611,28 @@ export class ReadSession {
           payload.location,
           options?.azureAccount,
         );
-        const headers: Record<string, string> = {
-          Range: `bytes=${payload.offset}-${payload.offset + payload.length - 1}`,
-        };
 
-        // Add conditional request headers for integrity validation (opt-in
-        // because these trigger CORS preflight in browsers)
-        if (options?.validateChecksums) {
-          if (payload.checksumEtag) {
-            headers["If-Match"] = payload.checksumEtag;
-          }
-          if (payload.checksumLastModified > 0) {
-            headers["If-Unmodified-Since"] = new Date(
-              payload.checksumLastModified * 1000,
-            ).toUTCString();
-          }
-        }
-
-        const fetchInit: RequestInit = {
-          headers,
-          signal: options?.signal,
-        };
-
-        const client = options?.fetchClient;
-        const response = client
-          ? await client.fetch(httpUrl, fetchInit)
-          : await fetch(httpUrl, fetchInit);
-
-        if (response.status === 412) {
-          throw new Error(
-            `Virtual chunk at ${httpUrl} failed integrity check — data has been modified since snapshot was created`,
-          );
-        }
-
-        if (response.status !== 200 && response.status !== 206) {
-          throw new Error(
-            `Failed to fetch virtual chunk from ${httpUrl}: ${response.status} ${response.statusText}`,
-          );
-        }
-
-        const data = new Uint8Array(await response.arrayBuffer());
-        if (response.status === 206) {
-          if (data.length !== payload.length) {
-            throw new Error(
-              `Virtual range response size mismatch for ${httpUrl}: expected ${payload.length} bytes, got ${data.length}`,
-            );
-          }
-          return data;
-        }
-
-        const absoluteEnd = payload.offset + payload.length;
-        // 200 means the Range request was ignored; only accept it if we can prove
-        // we received enough bytes to slice the requested absolute window.
-        if (data.length >= absoluteEnd) {
-          return data.slice(payload.offset, absoluteEnd);
-        }
-
-        throw new Error(
-          `Virtual range request not honored for ${httpUrl}: need at least ${absoluteEnd} bytes for fallback slicing, got ${data.length}`,
+        const store = await this.getVirtualStoreForPayload(
+          httpUrl,
+          payload,
+          options,
         );
+        const data = await store.getRange(
+          "/",
+          { offset: payload.offset, length: payload.length },
+          { signal: options?.signal },
+        );
+        if (!data) {
+          throw new Error(
+            `Failed to fetch virtual chunk from ${httpUrl}: empty response`,
+          );
+        }
+        if (data.length !== payload.length) {
+          throw new Error(
+            `Virtual range response size mismatch for ${httpUrl}: expected ${payload.length} bytes, got ${data.length}`,
+          );
+        }
+        return data;
       }
     }
   }
@@ -501,7 +641,7 @@ export class ReadSession {
   private async fetchChunkPayloadRange(
     payload: ChunkPayload,
     range: { offset: number; length: number } | { suffixLength: number },
-    options?: RequestOptions,
+    options?: ReadOptions,
   ): Promise<Uint8Array> {
     // Compute absolute start/end within the chunk's data
     let rangeStart: number;
@@ -525,93 +665,57 @@ export class ReadSession {
 
       case "native": {
         const path = getChunkPath(encodeObjectId12(payload.chunkId));
-        const storageRange: ByteRange = {
-          start: payload.offset + rangeStart,
-          end: payload.offset + rangeEnd,
-        };
+        const requestedStart = payload.offset + rangeStart;
         const expectedSize = rangeEnd - rangeStart;
-        const data = await this.storage.getObject(path, storageRange, options);
+        const requestedEnd = requestedStart + expectedSize;
+        const store = await this.getNativeStore(options);
+        const data = await store.getRange(
+          path,
+          { offset: requestedStart, length: expectedSize },
+          { signal: options?.signal },
+        );
+        if (!data) {
+          throw new Error(
+            `Failed to fetch native chunk from ${path} range ${requestedStart}-${requestedEnd - 1}: empty response`,
+          );
+        }
         if (data.length === expectedSize) return data;
 
-        // Range header may be ignored (e.g. HTTP 200 full body). If the full object
-        // is available, slice out the requested window explicitly.
-        if (data.length >= storageRange.end) {
-          return data.slice(storageRange.start, storageRange.end);
-        }
-
         throw new Error(
-          `Storage returned ${data.length} bytes for ${path} range ${storageRange.start}-${storageRange.end - 1}; expected ${expectedSize} bytes`,
+          `Storage returned ${data.length} bytes for ${path} range ${requestedStart}-${requestedEnd - 1}; expected ${expectedSize} bytes`,
         );
       }
 
       case "virtual": {
         const absoluteStart = payload.offset + rangeStart;
-        const absoluteEnd = payload.offset + rangeEnd;
+        const expectedSize = rangeEnd - rangeStart;
 
         const httpUrl = translateToHttpUrl(
           payload.location,
           options?.azureAccount,
         );
-        const headers: Record<string, string> = {
-          Range: `bytes=${absoluteStart}-${absoluteEnd - 1}`,
-        };
 
-        // Add conditional request headers for integrity validation (opt-in
-        // because these trigger CORS preflight in browsers)
-        if (options?.validateChecksums) {
-          if (payload.checksumEtag) {
-            headers["If-Match"] = payload.checksumEtag;
-          }
-          if (payload.checksumLastModified > 0) {
-            headers["If-Unmodified-Since"] = new Date(
-              payload.checksumLastModified * 1000,
-            ).toUTCString();
-          }
-        }
-
-        const fetchInit: RequestInit = {
-          headers,
-          signal: options?.signal,
-        };
-
-        const client = options?.fetchClient;
-        const response = client
-          ? await client.fetch(httpUrl, fetchInit)
-          : await fetch(httpUrl, fetchInit);
-
-        if (response.status === 412) {
-          throw new Error(
-            `Virtual chunk at ${httpUrl} failed integrity check — data has been modified since snapshot was created`,
-          );
-        }
-
-        if (response.status !== 200 && response.status !== 206) {
-          throw new Error(
-            `Failed to fetch virtual chunk from ${httpUrl}: ${response.status} ${response.statusText}`,
-          );
-        }
-
-        const expectedSize = rangeEnd - rangeStart;
-        const data = new Uint8Array(await response.arrayBuffer());
-
-        if (response.status === 206) {
-          if (data.length !== expectedSize) {
-            throw new Error(
-              `Virtual range response size mismatch for ${httpUrl}: expected ${expectedSize} bytes, got ${data.length}`,
-            );
-          }
-          return data;
-        }
-
-        // 200 means the Range request was ignored; only accept it if we can prove
-        // we received enough bytes to slice the requested absolute window.
-        if (data.length >= absoluteEnd) {
-          return data.slice(absoluteStart, absoluteEnd);
-        }
-
-        throw new Error(
-          `Virtual range request not honored for ${httpUrl}: need at least ${absoluteEnd} bytes for fallback slicing, got ${data.length}`,
+        const store = await this.getVirtualStoreForPayload(
+          httpUrl,
+          payload,
+          options,
         );
+        const data = await store.getRange(
+          "/",
+          { offset: absoluteStart, length: expectedSize },
+          { signal: options?.signal },
+        );
+        if (!data) {
+          throw new Error(
+            `Failed to fetch virtual chunk from ${httpUrl}: empty response`,
+          );
+        }
+        if (data.length !== expectedSize) {
+          throw new Error(
+            `Virtual range response size mismatch for ${httpUrl}: expected ${expectedSize} bytes, got ${data.length}`,
+          );
+        }
+        return data;
       }
     }
   }
@@ -641,6 +745,20 @@ export class ReadSession {
 
 /** UTF-8 encoder for byte comparisons */
 const utf8Encoder = new TextEncoder();
+
+function toRequestOptions(options?: ReadOptions): RequestOptions | undefined {
+  if (!options) return undefined;
+  return {
+    ...(options.signal && { signal: options.signal }),
+    ...(options.fetchClient && { fetchClient: options.fetchClient }),
+    ...(options.validateChecksums !== undefined && {
+      validateChecksums: options.validateChecksums,
+    }),
+    ...(options.azureAccount !== undefined && {
+      azureAccount: options.azureAccount,
+    }),
+  };
+}
 
 /**
  * Compare two strings by UTF-8 byte order to match Rust's str::cmp.

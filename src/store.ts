@@ -11,6 +11,7 @@ import { HttpStorage } from "./storage/http-storage.js";
 import type { Storage, FetchClient } from "./storage/storage.js";
 import { NotFoundError } from "./storage/storage.js";
 import type { NodeSnapshot } from "./format/flatbuffers/types.js";
+import type { RangeCoalescingFn } from "./reader/range-coalescer.js";
 
 /**
  * zarrita's AbsolutePath type - paths must start with "/"
@@ -67,6 +68,14 @@ export interface IcechunkStoreOptions {
   maxManifestCacheSize?: number;
 
   /**
+   * Zarrita-backed range coalescing function for chunk payload reads.
+   *
+   * Pass `zarrita.withRangeCoalescing` to opt in. Concurrent range reads
+   * against the same backing object may be merged into one larger request.
+   */
+  withRangeCoalescing?: RangeCoalescingFn;
+
+  /**
    * Send If-Match / If-Unmodified-Since headers on virtual chunk requests.
    *
    * Defaults to false because these headers trigger CORS preflight in browsers.
@@ -104,6 +113,7 @@ export class IcechunkStore implements AsyncReadable {
   private fetchClient?: FetchClient;
   private validateChecksums: boolean;
   private azureAccount?: string;
+  private withRangeCoalescing?: RangeCoalescingFn;
   private basePath: string = "";
 
   private constructor(
@@ -111,6 +121,7 @@ export class IcechunkStore implements AsyncReadable {
     fetchClient?: FetchClient,
     validateChecksums?: boolean,
     azureAccount?: string,
+    withRangeCoalescing?: RangeCoalescingFn,
   ) {
     if (!(session instanceof ReadSession)) {
       throw new Error(
@@ -121,6 +132,7 @@ export class IcechunkStore implements AsyncReadable {
     this.fetchClient = fetchClient;
     this.validateChecksums = validateChecksums ?? false;
     this.azureAccount = azureAccount;
+    this.withRangeCoalescing = withRangeCoalescing;
   }
 
   /**
@@ -138,11 +150,17 @@ export class IcechunkStore implements AsyncReadable {
    * Open an IcechunkStore from an existing ReadSession.
    *
    * @param session - Existing ReadSession
-   * @param options - Store options (only fetchClient is used)
+   * @param options - Store options for virtual chunk reads
    */
   static async open(
     session: ReadSession,
-    options?: Pick<IcechunkStoreOptions, "fetchClient">,
+    options?: Pick<
+      IcechunkStoreOptions,
+      | "fetchClient"
+      | "validateChecksums"
+      | "azureAccount"
+      | "withRangeCoalescing"
+    >,
   ): Promise<IcechunkStore>;
 
   /**
@@ -166,6 +184,7 @@ export class IcechunkStore implements AsyncReadable {
         options.fetchClient,
         options.validateChecksums,
         options.azureAccount,
+        options.withRangeCoalescing,
       );
     }
 
@@ -201,6 +220,7 @@ export class IcechunkStore implements AsyncReadable {
       options.fetchClient,
       options.validateChecksums,
       options.azureAccount,
+      options.withRangeCoalescing,
     );
   }
 
@@ -236,6 +256,9 @@ export class IcechunkStore implements AsyncReadable {
         ...(this.fetchClient && { fetchClient: this.fetchClient }),
         validateChecksums: this.validateChecksums,
         azureAccount: this.azureAccount,
+        ...(this.withRangeCoalescing && {
+          withRangeCoalescing: this.withRangeCoalescing,
+        }),
       });
       return chunk ?? undefined;
     } catch (err) {
@@ -284,6 +307,9 @@ export class IcechunkStore implements AsyncReadable {
             ...(this.fetchClient && { fetchClient: this.fetchClient }),
             validateChecksums: this.validateChecksums,
             azureAccount: this.azureAccount,
+            ...(this.withRangeCoalescing && {
+              withRangeCoalescing: this.withRangeCoalescing,
+            }),
           },
         );
         return data ?? undefined;
@@ -330,6 +356,7 @@ export class IcechunkStore implements AsyncReadable {
       this.fetchClient,
       this.validateChecksums,
       this.azureAccount,
+      this.withRangeCoalescing,
     );
     const cleanPath = path.replace(/^\/+|\/+$/g, "");
     scoped.basePath = this.basePath
