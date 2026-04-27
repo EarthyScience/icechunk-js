@@ -63,20 +63,15 @@ export function singleFlight<K, V>(cache: CacheLike<K, V>): SingleFlight<K, V> {
       let entry = pending.get(key);
       if (!entry) {
         const controller = new AbortController();
-        // Pre-allocate so the chain's `.finally` can compare identity.
-        const fresh: Pending<V> = {
-          promise: undefined as unknown as Promise<V>,
-          controller,
-          refCount: 0,
-        };
-        fresh.promise = invokeFetcher(fetcher, controller.signal)
+        const promise = invokeFetcher(fetcher, controller.signal)
           .then((value) => {
             cache.set(key, value);
             return value;
           })
           .finally(() => {
-            if (pending.get(key) === fresh) pending.delete(key);
+            if (pending.get(key)?.promise === promise) pending.delete(key);
           });
+        const fresh: Pending<V> = { promise, controller, refCount: 0 };
         pending.set(key, fresh);
         entry = fresh;
       }
