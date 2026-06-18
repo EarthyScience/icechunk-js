@@ -57,8 +57,11 @@ function zstdFrameAllocSize(frame: Uint8Array): number {
   if (!singleSegment) {
     if (pos >= frame.length) return Infinity;
     const wd = frame[pos++];
-    const base = 1 << (10 + (wd >> 3));
-    windowSize = base + (base >> 3) * (wd & 7);
+    // Arithmetic (not bitwise `1 <<`/`>> 3`): the exponent can reach 41, which
+    // would overflow 32-bit JS shifts and let a crafted window descriptor
+    // compute a bogus small size that slips past the bound below.
+    const base = 2 ** (10 + (wd >> 3));
+    windowSize = base + (base / 8) * (wd & 7);
   }
   pos += dictIdFlag === 3 ? 4 : dictIdFlag; // skip dictionary id
 

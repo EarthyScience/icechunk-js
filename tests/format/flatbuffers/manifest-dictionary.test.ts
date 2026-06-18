@@ -282,4 +282,30 @@ describe("dictionary-compressed locations", () => {
     });
     expect(() => parseManifest(data)).toThrow(/declares a size over 1024/);
   });
+
+  it("rejects a frame with a huge window descriptor (32-bit shift overflow)", () => {
+    // No single-segment / content size; a window descriptor with exponent 41.
+    // A bitwise `1 << 41` would wrap to 512 and wrongly pass the bound — the
+    // arithmetic computation must reject it.
+    const malicious = new Uint8Array([
+      0x28,
+      0xb5,
+      0x2f,
+      0xfd, // magic
+      0x00, // FHD: not single-segment, no content size
+      0xf8, // window descriptor: exponent 31 -> 2**41 bytes
+    ]);
+    const nodeId = mockNodeId(6);
+    const data = buildManifest({
+      dictionary: DICTIONARY,
+      compressionAlgorithm: 1,
+      arrays: [
+        {
+          nodeId,
+          refs: [{ index: [0], offset: 0, length: 1, compressed: malicious }],
+        },
+      ],
+    });
+    expect(() => parseManifest(data)).toThrow(/declares a size over 1024/);
+  });
 });
