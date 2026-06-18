@@ -66,4 +66,19 @@ export class SnapshotInfo {
     const offset = this.bb!.__offset(this.bb_pos, 12);
     return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
   }
+
+  prunedAncestorTxLogs(index: number, obj?: ObjectId12): ObjectId12 | null {
+    const offset = this.bb!.__offset(this.bb_pos, 14);
+    return offset
+      ? (obj || new ObjectId12()).__init(
+          this.bb!.__vector(this.bb_pos + offset) + index * 12,
+          this.bb!,
+        )
+      : null;
+  }
+
+  prunedAncestorTxLogsLength(): number {
+    const offset = this.bb!.__offset(this.bb_pos, 14);
+    return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+  }
 }
