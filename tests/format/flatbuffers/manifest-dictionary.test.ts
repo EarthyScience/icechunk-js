@@ -305,8 +305,10 @@ describe("dictionary-compressed locations", () => {
   });
 
   it("rejects a frame with a huge window descriptor (32-bit shift overflow)", () => {
-    // No single-segment / content size; a window descriptor with exponent 41.
-    // A bitwise `1 << 41` would wrap to 512 and wrongly pass the bound — the
+    // Not single-segment / no content size, with a window descriptor of
+    // wd>>3 = 31 -> exponent 41 -> 2**41 bytes, then a tiny RLE last block so
+    // the frame is complete and the window size itself is what's checked. A
+    // bitwise `1 << 41` would wrap to 512 and wrongly pass the bound — the
     // arithmetic computation must reject it.
     const malicious = new Uint8Array([
       0x28,
@@ -314,9 +316,47 @@ describe("dictionary-compressed locations", () => {
       0x2f,
       0xfd, // magic
       0x00, // FHD: not single-segment, no content size
-      0xf8, // window descriptor: exponent 31 -> 2**41 bytes
+      0xf8, // window descriptor: wd>>3 = 31 -> exponent 41 -> 2**41 bytes
+      0x0b,
+      0x00,
+      0x00, // block header: RLE (type 1), last block, block size 1
+      0x41, // the single RLE byte
     ]);
     const nodeId = mockNodeId(6);
+    const data = buildManifest({
+      dictionary: DICTIONARY,
+      compressionAlgorithm: 1,
+      arrays: [
+        {
+          nodeId,
+          refs: [{ index: [0], offset: 0, length: 1, compressed: malicious }],
+        },
+      ],
+    });
+    expect(resolveSingleLocation(data, nodeId)).toThrow(
+      /declares a size over 1024/,
+    );
+  });
+
+  it("rejects an RLE block that expands a single byte past the size bound", () => {
+    // An RLE block costs one input byte but expands to its declared size. The
+    // header advertises only the smallest (1024-byte) window, so the up-front
+    // size looks fine — the guard must also count the block's declared output.
+    const blockSize = 2_000_000;
+    const header = (blockSize << 3) | (1 << 1) | 1; // RLE (type 1), last block
+    const malicious = new Uint8Array([
+      0x28,
+      0xb5,
+      0x2f,
+      0xfd, // magic
+      0x00, // FHD: not single-segment, no content size
+      0x00, // window descriptor: smallest window (1024 bytes)
+      header & 0xff,
+      (header >> 8) & 0xff,
+      (header >> 16) & 0xff,
+      0x41, // the single RLE byte
+    ]);
+    const nodeId = mockNodeId(8);
     const data = buildManifest({
       dictionary: DICTIONARY,
       compressionAlgorithm: 1,

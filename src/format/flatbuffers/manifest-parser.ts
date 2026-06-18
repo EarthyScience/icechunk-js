@@ -27,17 +27,19 @@ const COMPRESSION_ALG_ZSTD_DICT = 1;
 const MAX_DECOMPRESSED_LOCATION_SIZE = 1024;
 
 /**
- * Bytes that a zstd decoder allocates up front for `frame`, read from the frame
- * header: the advertised frame content size, falling back to the window size.
- * Mirrors the allocation in the vendored fzstd `rzfh`. Requires `frame` to be a
- * single complete frame covering the whole input; returns `Infinity` for a
- * missing/short/unrecognized header, a malformed block, or any trailing bytes
- * (a concatenated second frame), so callers reject rather than trust it.
+ * Upper bound on the bytes the vendored fzstd decoder will allocate for
+ * `frame`, computed from the frame header *without* decompressing: the larger
+ * of the up-front frame buffer (content size, falling back to window size, per
+ * `rzfh`) and the sum of the per-block output buffers (per `rzb`). Requires
+ * `frame` to be a single complete frame covering the whole input; returns
+ * `Infinity` for a missing/short/unrecognized header, a malformed/reserved
+ * block, or any trailing bytes (a concatenated second frame), so callers reject
+ * rather than trust it.
  *
  * Used to bound allocation *before* decompressing an untrusted
  * `compressed_location`: the size check on the decompressed output alone is too
- * late, since the decoder would already have allocated per the advertised size,
- * and it decodes every concatenated frame.
+ * late, since the decoder allocates per the header — including RLE blocks that
+ * expand a single input byte to a huge declared size — before that check runs.
  */
 function zstdFrameAllocSize(frame: Uint8Array): number {
   // Magic number 0xFD2FB528 (little-endian), then the frame header descriptor.
@@ -82,11 +84,18 @@ function zstdFrameAllocSize(frame: Uint8Array): number {
   }
   pos += fcsBytes;
 
-  // Walk the data blocks to the frame end. `decompress()` decodes *every*
-  // concatenated frame and allocates per frame, so a first-frame-only size
-  // check is bypassable by appending a frame that advertises a huge size.
-  // Require exactly one complete frame covering the whole input; reject
-  // trailing bytes (a second frame) or any malformed block.
+  // Walk the data blocks to the frame end, summing the output each block makes
+  // the decoder allocate. This is essential, not just an EOF check: an RLE
+  // block costs one input byte but expands to its declared size (up to ~2MB),
+  // and a compressed block expands to one block-max regardless of input — so a
+  // frame whose header advertises a tiny window/content size can still force a
+  // huge allocation. We mirror the per-block allocations in the vendored fzstd
+  // `rzb`: RLE/raw -> the block size, compressed -> min(windowSize, 128KiB).
+  //
+  // Also require exactly one complete frame covering the whole input:
+  // `decompress()` decodes *every* concatenated frame and allocates per frame,
+  // so trailing bytes (a second frame advertising a huge size) must be rejected.
+  let blockOutput = 0;
   for (;;) {
     if (pos + 3 > frame.length) return Infinity;
     const blockHeader =
@@ -94,15 +103,27 @@ function zstdFrameAllocSize(frame: Uint8Array): number {
     pos += 3;
     const lastBlock = blockHeader & 1;
     const blockType = (blockHeader >> 1) & 3;
+    const blockSize = blockHeader >> 3;
     if (blockType === 3) return Infinity; // reserved block type
-    pos += blockType === 1 ? 1 : blockHeader >> 3; // RLE block content is 1 byte
+    if (blockType === 1) {
+      // RLE: one input byte, but the decoder allocates `blockSize` output bytes.
+      blockOutput += blockSize;
+      pos += 1;
+    } else {
+      // Raw (0): `blockSize` literal bytes, present in the input.
+      // Compressed (2): decoder allocates one block-max, min(windowSize, 128KiB).
+      blockOutput += blockType === 0 ? blockSize : Math.min(windowSize, 131072);
+      pos += blockSize;
+    }
     if (pos > frame.length) return Infinity;
     if (lastBlock) break;
   }
   if (contentChecksum) pos += 4;
   if (pos !== frame.length) return Infinity; // trailing/concatenated frame
 
-  return contentSize || windowSize;
+  // The decoder allocates both the up-front frame buffer (content/window size)
+  // and the per-block buffers; bound by the larger of the two.
+  return Math.max(contentSize || windowSize, blockOutput);
 }
 
 /**
