@@ -107,8 +107,8 @@ function zstdFrameAllocSize(frame: Uint8Array): number {
 
 /**
  * Decode a ChunkRef's `compressed_location` byte vector into a location string.
- * Returns `null` when this manifest has no location dictionary (locations are
- * stored uncompressed).
+ * Throws if the manifest has no location dictionary, if the frame's declared
+ * size exceeds the bound, or if the bytes aren't valid UTF-8.
  */
 type LocationDecoder = (compressed: Uint8Array) => string;
 
@@ -239,33 +239,49 @@ function parseChunkRef(
       )
     : null;
 
-  // Resolve the virtual location. Per the Rust `ref_to_payload` priority
-  // (chunk_id -> compressed_location -> location), a dictionary-compressed
-  // location takes precedence over the plain `location` string and is decoded
-  // here at parse time. `chunk_id` refs are native, not virtual, so they never
-  // carry a location — skip decoding for them.
-  let location = fbsRef.location();
-  if (chunkId === null) {
-    const compressed = fbsRef.compressedLocationArray();
-    if (compressed) {
-      location = decodeLocation(compressed);
-    }
-  }
-
   // Parse checksum fields
   const checksumEtag = fbsRef.checksumEtag();
   const checksumLastModified = fbsRef.checksumLastModified();
 
-  return {
+  const ref: ChunkRef = {
     index,
     inline,
     offset,
     length,
     chunkId,
-    location,
+    location: fbsRef.location(),
     checksumEtag,
     checksumLastModified,
   };
+
+  // A dictionary-compressed location takes precedence over the plain `location`
+  // string (Rust `ref_to_payload` priority: chunk_id -> compressed_location ->
+  // location). `chunk_id` refs are native, not virtual, so they never carry a
+  // location. Decode lazily on first read of `location` — mirroring the Rust
+  // reader, which decompresses in `ref_to_payload` — so parsing a manifest
+  // never decompresses locations the caller doesn't access (the binary search
+  // in findChunkRef touches only `index`), and a single malformed frame fails
+  // just its own ref instead of aborting the whole manifest parse.
+  if (chunkId === null) {
+    const compressed = fbsRef.compressedLocationArray();
+    if (compressed) {
+      let decoded: string | null = null;
+      let resolved = false;
+      Object.defineProperty(ref, "location", {
+        configurable: true,
+        enumerable: true,
+        get() {
+          if (!resolved) {
+            decoded = decodeLocation(compressed);
+            resolved = true;
+          }
+          return decoded;
+        },
+      });
+    }
+  }
+
+  return ref;
 }
 
 /**
@@ -357,8 +373,8 @@ function binarySearchChunkRef(
  * Extract the payload type from a ChunkRef.
  *
  * Priority matches the Rust `ref_to_payload`: chunk_id (native) ->
- * location (virtual; already decoded from compressed_location at parse time)
- * -> inline.
+ * location (virtual) -> inline. Reading `ref.location` decodes a
+ * dictionary-compressed location lazily, and may throw on a malformed frame.
  */
 export function getChunkPayload(ref: ChunkRef): ChunkPayload {
   if (ref.chunkId !== null) {

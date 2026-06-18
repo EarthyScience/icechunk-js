@@ -157,6 +157,21 @@ function buildManifest(spec: ManifestSpec): Uint8Array {
   return builder.asUint8Array();
 }
 
+/**
+ * Locations decode lazily, so a bad `compressed_location` never makes
+ * parseManifest throw — the error surfaces only when the ref's location is read
+ * (here, via getChunkPayload). Returns a thunk that resolves the single ref at
+ * coords [0] so callers can assert on the deferred throw.
+ */
+function resolveSingleLocation(
+  data: Uint8Array,
+  nodeId: ObjectId8,
+): () => unknown {
+  const ref = findChunkRef(parseManifest(data), nodeId, [0]);
+  expect(ref).not.toBeNull();
+  return () => getChunkPayload(ref!);
+}
+
 describe("dictionary-compressed locations", () => {
   it("vendored fzstd decodes a real zstd dictionary frame", () => {
     const decoded = new TextDecoder().decode(
@@ -226,7 +241,9 @@ describe("dictionary-compressed locations", () => {
         },
       ],
     });
-    expect(() => parseManifest(data)).toThrow(/location dictionary/);
+    // Decode is lazy: parsing succeeds; the error surfaces only on read.
+    expect(() => parseManifest(data)).not.toThrow();
+    expect(resolveSingleLocation(data, nodeId)).toThrow(/location dictionary/);
   });
 
   it("rejects a location that decompresses beyond the size bound", () => {
@@ -245,7 +262,9 @@ describe("dictionary-compressed locations", () => {
         },
       ],
     });
-    expect(() => parseManifest(data)).toThrow(/declares a size over 1024/);
+    expect(resolveSingleLocation(data, nodeId)).toThrow(
+      /declares a size over 1024/,
+    );
   });
 
   it("decodes a frame whose output aliases the dictionary buffer (fzstd patch)", () => {
@@ -280,7 +299,9 @@ describe("dictionary-compressed locations", () => {
         },
       ],
     });
-    expect(() => parseManifest(data)).toThrow(/declares a size over 1024/);
+    expect(resolveSingleLocation(data, nodeId)).toThrow(
+      /declares a size over 1024/,
+    );
   });
 
   it("rejects a frame with a huge window descriptor (32-bit shift overflow)", () => {
@@ -306,7 +327,9 @@ describe("dictionary-compressed locations", () => {
         },
       ],
     });
-    expect(() => parseManifest(data)).toThrow(/declares a size over 1024/);
+    expect(resolveSingleLocation(data, nodeId)).toThrow(
+      /declares a size over 1024/,
+    );
   });
 
   it("rejects a compressed_location with a trailing/concatenated frame", () => {
@@ -330,6 +353,8 @@ describe("dictionary-compressed locations", () => {
         },
       ],
     });
-    expect(() => parseManifest(data)).toThrow(/declares a size over 1024/);
+    expect(resolveSingleLocation(data, nodeId)).toThrow(
+      /declares a size over 1024/,
+    );
   });
 });
