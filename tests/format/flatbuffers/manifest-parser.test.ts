@@ -504,8 +504,9 @@ describe("getChunkPayload", () => {
     expect(() => getChunkPayload(invalidRef)).toThrow("Invalid ChunkRef");
   });
 
-  it("should prefer inline over native", () => {
-    // Edge case: ref has both inline and chunkId (shouldn't happen, but test precedence)
+  it("should prefer native (chunk_id) over inline", () => {
+    // Edge case: ref has both chunkId and inline (shouldn't happen, but test
+    // precedence). Priority follows the Rust `ref_to_payload`: chunk_id first.
     const ref: ChunkRef = {
       index: [0],
       inline: new Uint8Array([1, 2, 3]),
@@ -518,6 +519,6 @@ describe("getChunkPayload", () => {
     };
 
     const payload = getChunkPayload(ref);
-    expect(payload.type).toBe("inline");
+    expect(payload.type).toBe("native");
   });
 });

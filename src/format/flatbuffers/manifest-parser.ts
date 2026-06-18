@@ -5,6 +5,7 @@
  */
 
 import { ByteBuffer } from "flatbuffers";
+import { decompress } from "../../vendor/fzstd/index.js";
 import { Manifest as FbsManifest } from "./generated/manifest.js";
 import { ArrayManifest as FbsArrayManifest } from "./generated/array-manifest.js";
 import { ChunkRef as FbsChunkRef } from "./generated/chunk-ref.js";
@@ -18,6 +19,70 @@ import {
   type ObjectId8,
 } from "./types.js";
 
+/** compression_algorithm value for zstd dictionary-compressed locations. */
+const COMPRESSION_ALG_ZSTD_DICT = 1;
+
+/** Upper bound on a decompressed location, matching the Rust
+ * `MAX_DECOMPRESSED_LOCATION_SIZE`. */
+const MAX_DECOMPRESSED_LOCATION_SIZE = 1024;
+
+/**
+ * Bytes that a zstd decoder allocates up front for `frame`, read from the frame
+ * header: the advertised frame content size, falling back to the window size.
+ * Mirrors the allocation in the vendored fzstd `rzfh`. Returns `Infinity` for a
+ * missing/short/unrecognized header so callers reject rather than trust it.
+ *
+ * Used to bound allocation *before* decompressing an untrusted
+ * `compressed_location`: the size check on the decompressed output alone is too
+ * late, since the decoder would already have allocated per the advertised size.
+ */
+function zstdFrameAllocSize(frame: Uint8Array): number {
+  // Magic number 0xFD2FB528 (little-endian), then the frame header descriptor.
+  if (
+    frame.length < 5 ||
+    frame[0] !== 0x28 ||
+    frame[1] !== 0xb5 ||
+    frame[2] !== 0x2f ||
+    frame[3] !== 0xfd
+  ) {
+    return Infinity;
+  }
+  const flg = frame[4];
+  const singleSegment = (flg >> 5) & 1;
+  const dictIdFlag = flg & 3;
+  const contentSizeFlag = flg >> 6;
+
+  let pos = 5;
+  let windowSize = 0;
+  if (!singleSegment) {
+    if (pos >= frame.length) return Infinity;
+    const wd = frame[pos++];
+    const base = 1 << (10 + (wd >> 3));
+    windowSize = base + (base >> 3) * (wd & 7);
+  }
+  pos += dictIdFlag === 3 ? 4 : dictIdFlag; // skip dictionary id
+
+  // Frame content size: 0/1/2/4/8 bytes per the flags (matching fzstd's rzfh).
+  const fcsBytes = contentSizeFlag ? 1 << contentSizeFlag : singleSegment;
+  let contentSize = 0;
+  if (fcsBytes) {
+    if (pos + fcsBytes > frame.length) return Infinity;
+    for (let i = 0; i < fcsBytes; i++) {
+      contentSize += frame[pos + i] * 2 ** (8 * i);
+    }
+    if (contentSizeFlag === 1) contentSize += 256;
+    if (singleSegment) windowSize = contentSize;
+  }
+  return contentSize || windowSize;
+}
+
+/**
+ * Decode a ChunkRef's `compressed_location` byte vector into a location string.
+ * Returns `null` when this manifest has no location dictionary (locations are
+ * stored uncompressed).
+ */
+type LocationDecoder = (compressed: Uint8Array) => string;
+
 /** Parse a Manifest from FlatBuffer data */
 export function parseManifest(data: Uint8Array): Manifest {
   const bb = new ByteBuffer(data);
@@ -30,20 +95,66 @@ export function parseManifest(data: Uint8Array): Manifest {
     idObj.bb!.bytes().slice(idObj.bb_pos, idObj.bb_pos + 12),
   );
 
+  // Build the location decoder once per manifest from its zstd dictionary.
+  const decodeLocation = makeLocationDecoder(fbsManifest);
+
   // Parse arrays
   const arraysLength = fbsManifest.arraysLength();
   const arrays: ArrayManifest[] = [];
   for (let i = 0; i < arraysLength; i++) {
     const fbsArray = fbsManifest.arrays(i);
     if (fbsArray) {
-      arrays.push(parseArrayManifest(fbsArray));
+      arrays.push(parseArrayManifest(fbsArray, decodeLocation));
     }
   }
 
   return { id, arrays };
 }
 
-function parseArrayManifest(fbsArray: FbsArrayManifest): ArrayManifest {
+/**
+ * Build the function that turns a ChunkRef's `compressed_location` into a
+ * location string, using the manifest's zstd dictionary.
+ *
+ * Mirrors the Rust `Manifest::decompressor`: a dictionary is only used when
+ * `compression_algorithm == ZSTD_DICT` and `location_dictionary` is present.
+ * When a `compressed_location` is encountered without a dictionary, decoding
+ * throws (matching the Rust `MissingLocationCompressionDictionary` error).
+ */
+function makeLocationDecoder(fbsManifest: FbsManifest): LocationDecoder {
+  const dictionary =
+    fbsManifest.compressionAlgorithm() === COMPRESSION_ALG_ZSTD_DICT
+      ? fbsManifest.locationDictionaryArray()
+      : null;
+  // `fatal` makes invalid UTF-8 throw, matching the Rust `String::from_utf8`.
+  const textDecoder = new TextDecoder("utf-8", { fatal: true });
+  return (compressed: Uint8Array): string => {
+    if (!dictionary) {
+      throw new Error(
+        "ChunkRef has a compressed_location but the manifest has no location dictionary",
+      );
+    }
+    // Reject before decompressing: a malformed frame can advertise a huge size
+    // and make the decoder allocate far beyond the bound (or OOM) before the
+    // post-decompress length check below would run.
+    if (zstdFrameAllocSize(compressed) > MAX_DECOMPRESSED_LOCATION_SIZE) {
+      throw new Error(
+        `Compressed location declares a size over ${MAX_DECOMPRESSED_LOCATION_SIZE} bytes`,
+      );
+    }
+    const decompressed = decompress(compressed, undefined, dictionary);
+    if (decompressed.length > MAX_DECOMPRESSED_LOCATION_SIZE) {
+      throw new Error(
+        `Decompressed location exceeds ${MAX_DECOMPRESSED_LOCATION_SIZE} bytes`,
+      );
+    }
+    return textDecoder.decode(decompressed);
+  };
+}
+
+function parseArrayManifest(
+  fbsArray: FbsArrayManifest,
+  decodeLocation: LocationDecoder,
+): ArrayManifest {
   // Parse node_id (required)
   const nodeIdObj = fbsArray.nodeId();
   if (!nodeIdObj)
@@ -58,14 +169,17 @@ function parseArrayManifest(fbsArray: FbsArrayManifest): ArrayManifest {
   for (let i = 0; i < refsLength; i++) {
     const fbsRef = fbsArray.refs(i);
     if (fbsRef) {
-      refs.push(parseChunkRef(fbsRef));
+      refs.push(parseChunkRef(fbsRef, decodeLocation));
     }
   }
 
   return { nodeId, refs };
 }
 
-function parseChunkRef(fbsRef: FbsChunkRef): ChunkRef {
+function parseChunkRef(
+  fbsRef: FbsChunkRef,
+  decodeLocation: LocationDecoder,
+): ChunkRef {
   // Parse index (required, vector of uint32)
   const indexLength = fbsRef.indexLength();
   const index: number[] = [];
@@ -89,8 +203,18 @@ function parseChunkRef(fbsRef: FbsChunkRef): ChunkRef {
       )
     : null;
 
-  // Parse location (optional string)
-  const location = fbsRef.location();
+  // Resolve the virtual location. Per the Rust `ref_to_payload` priority
+  // (chunk_id -> compressed_location -> location), a dictionary-compressed
+  // location takes precedence over the plain `location` string and is decoded
+  // here at parse time. `chunk_id` refs are native, not virtual, so they never
+  // carry a location — skip decoding for them.
+  let location = fbsRef.location();
+  if (chunkId === null) {
+    const compressed = fbsRef.compressedLocationArray();
+    if (compressed) {
+      location = decodeLocation(compressed);
+    }
+  }
 
   // Parse checksum fields
   const checksumEtag = fbsRef.checksumEtag();
@@ -193,12 +317,14 @@ function binarySearchChunkRef(
   return null;
 }
 
-/** Extract the payload type from a ChunkRef */
+/**
+ * Extract the payload type from a ChunkRef.
+ *
+ * Priority matches the Rust `ref_to_payload`: chunk_id (native) ->
+ * location (virtual; already decoded from compressed_location at parse time)
+ * -> inline.
+ */
 export function getChunkPayload(ref: ChunkRef): ChunkPayload {
-  if (ref.inline !== null) {
-    return { type: "inline", data: ref.inline };
-  }
-
   if (ref.chunkId !== null) {
     return {
       type: "native",
@@ -219,5 +345,9 @@ export function getChunkPayload(ref: ChunkRef): ChunkPayload {
     };
   }
 
-  throw new Error("Invalid ChunkRef: no inline, chunkId, or location");
+  if (ref.inline !== null) {
+    return { type: "inline", data: ref.inline };
+  }
+
+  throw new Error("Invalid ChunkRef: no chunkId, location, or inline");
 }
