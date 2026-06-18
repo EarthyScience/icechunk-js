@@ -148,6 +148,13 @@ export function parseManifest(data: Uint8Array): Manifest {
  * `compression_algorithm == ZSTD_DICT` and `location_dictionary` is present.
  * When a `compressed_location` is encountered without a dictionary, decoding
  * throws (matching the Rust `MissingLocationCompressionDictionary` error).
+ *
+ * Note: `manifest.fbs` prose says `compression_algorithm == 0` means
+ * `compressed_location` holds raw (uncompressed) bytes, but that path is not
+ * implemented in the Rust reference — its writer only emits `compressed_location`
+ * for ZSTD_DICT (otherwise it writes the plain `location` field) and its reader
+ * errors here. We follow the reference behavior, not the (inconsistent) schema
+ * comment. See earth-mover/icechunk manifest.fbs vs manifest.rs.
  */
 function makeLocationDecoder(fbsManifest: FbsManifest): LocationDecoder {
   const dictionary =
