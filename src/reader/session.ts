@@ -7,7 +7,7 @@ import type {
   Storage,
   RequestOptions,
 } from "../storage/storage.js";
-import { decompress } from "fzstd";
+import { decompress } from "../vendor/fzstd/index.js";
 import { LRUCache } from "../cache/lru.js";
 import { singleFlight, type SingleFlight } from "../cache/single-flight.js";
 import {

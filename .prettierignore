@@ -1,0 +1,6 @@
+dist
+node_modules
+tests/data
+
+# Vendored third-party source — keep byte-identical to upstream
+src/vendor

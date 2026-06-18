@@ -9,7 +9,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { decompress } from "fzstd";
+import { decompress } from "../../../src/vendor/fzstd/index.js";
 import { parseTransactionLog } from "../../../src/format/flatbuffers/transaction-log-parser.js";
 import {
   parseHeader,
