@@ -4,27 +4,23 @@
  *
  * Source: the unmerged dictionary-decompression PR #18
  * (https://github.com/101arrowz/fzstd/pull/18), branch
- * `handlerug:push-qxkytkvukoqs` @ c039e52, which adds the optional `dic`
+ * `handlerug:push-qxkytkvukoqs` @ 819999b, which adds the optional `dic`
  * (dictionary) argument to `decompress()` and the `Decompress` stream.
  *
  * Why vendored: icechunk's dictionary-compressed virtual chunk locations need
- * zstd dictionary decompression, which released fzstd 0.1.1 lacks. PR #18 has
- * been unmerged/unreleased since Oct 2025 and the fork can't be cleanly
- * npm-installed (no committed dist, no prepare hook). The alternative decoder
- * (zstdify) silently corrupts ~32% of real icechunk metadata, so fzstd is the
- * only correct option. See ../../format/flatbuffers/manifest-parser.ts.
+ * zstd dictionary decompression, which released fzstd 0.1.1 lacks. PR #18 is
+ * still unmerged/unreleased and the fork can't be cleanly npm-installed (no
+ * committed dist, no prepare hook). The alternative decoder (zstdify) silently
+ * corrupts ~32% of real icechunk metadata, so fzstd is the only correct option.
+ * See ../../format/flatbuffers/manifest-parser.ts.
+ *
+ * This copy is byte-identical to the branch — no local edits. The branch now
+ * includes the dictionary/output-buffer aliasing fix (handlerug/fzstd#1, which
+ * we contributed), so there is no longer a local patch to re-apply. To update,
+ * re-vendor src/index.ts + LICENSE from the branch.
  *
  * Verified: byte-exact vs released fzstd on all 244 icechunk fixtures, plus
  * correct dictionary decode vs the reference `zstd` CLI.
- *
- * Do not edit by hand except for the documented local patch below — re-vendor
- * from the branch if updating, then re-apply the patch.
- *
- * LOCAL PATCH: a one-token fix (`!dic &&`) in decompress() near the
- * "LOCAL PATCH (icechunk-js)" comment, fixing a dictionary/output buffer
- * aliasing bug that silently corrupts output when the dictionary-content
- * length equals the decompressed size. Submitted upstream as
- * handlerug/fzstd#1 (against the fzstd#18 branch).
  */
 /* eslint-disable */
 // @ts-nocheck
@@ -693,12 +689,6 @@ export function decompress(dat: Uint8Array, buf?: Uint8Array, dic?: Uint8Array) 
       if (dic) rdic(dic, st);
       if (nb) {
         buf = null;
-        // LOCAL PATCH (icechunk-js): added `!dic`. When a dictionary was
-        // loaded, rdic() replaced st.w with the dictionary history, so reusing
-        // it as the output buffer aliases reads (back-references into the
-        // dictionary) with writes and silently corrupts output whenever the
-        // dictionary-content length equals the decompressed size. Skip the
-        // fast path when a dictionary is present. Upstream: handlerug/fzstd#1.
         if (!dic && st.w.length == st.u) {
           bufs.push(buf = st.w);
           ol += st.u;

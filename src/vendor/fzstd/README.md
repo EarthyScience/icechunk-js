@@ -28,29 +28,24 @@ So we vendor the dictionary-capable source and decompress with it everywhere.
 |---|---|
 | Repo | `101arrowz/fzstd` |
 | Branch | `handlerug:push-qxkytkvukoqs` (= the head of fzstd#18) |
-| Commit | `c039e52` "Support loading a dictionary for decompression" |
+| Commit | `819999b` (dictionary support + the aliasing fix, see below) |
 | File | `src/index.ts` → `index.ts` here (with a header prepended) |
 | License | `LICENSE` (copied verbatim) |
 
 `index.ts` is `@ts-nocheck`'d and excluded from Prettier (`.prettierignore`) to
-stay byte-identical to upstream apart from the documented patch below.
+stay byte-identical to upstream.
 
 ## Local modifications
 
-There is **one** deliberate change from upstream, marked in `index.ts` with a
-`LOCAL PATCH (icechunk-js)` comment (and summarized in the file header):
+**None.** This copy is byte-identical to the branch.
 
-- **Dictionary/output-buffer aliasing fix** — in `decompress()`, the
-  no-output-buffer fast path is guarded with `!dic`:
-  `if (!dic && st.w.length == st.u)`. When a dictionary is loaded, `rdic()`
-  replaces `st.w` with the dictionary history; reusing it as the output buffer
-  aliases back-reference reads with output writes and silently corrupts the
-  result whenever the dictionary-content length equals the decompressed size.
-  - Submitted upstream: **https://github.com/handlerug/fzstd/pull/1**
-    (against the fzstd#18 branch). When it merges and a release is published,
-    drop this patch on the next re-vendor.
-  - Regression coverage: `tests/format/flatbuffers/manifest-dictionary.test.ts`
-    ("decodes a frame whose output aliases the dictionary buffer").
+A dictionary/output-buffer aliasing bug in the original PR (silent corruption
+when the dictionary-content length equals the decompressed size) was found here
+and fixed upstream via [handlerug/fzstd#1](https://github.com/handlerug/fzstd/pull/1),
+now merged into the branch — so there is no longer a local patch to re-apply.
+Regression coverage lives in
+`tests/format/flatbuffers/manifest-dictionary.test.ts` ("decodes a frame whose
+output aliases the dictionary buffer").
 
 > Note: the size-bound (`MAX_DECOMPRESSED_LOCATION_SIZE`) and UTF-8 strictness
 > guards are **not** here — they live in the consumer
@@ -66,10 +61,9 @@ gh api "repos/handlerug/fzstd/contents/src/index.ts?ref=push-qxkytkvukoqs" \
 ```
 
 Then:
-1. Re-prepend the provenance header (top of the current `index.ts`).
-2. **Re-apply the local patch** — add `!dic &&` to the fast-path guard in
-   `decompress()` (search for `st.w.length == st.u`).
-3. Re-run the suite: `npm test` (the aliasing + dictionary tests must pass).
+1. Re-prepend the provenance header (top of the current `index.ts`), updating
+   the pinned commit.
+2. Re-run the suite: `npm test` (the aliasing + dictionary tests must pass).
 
 ## When this can be deleted
 
