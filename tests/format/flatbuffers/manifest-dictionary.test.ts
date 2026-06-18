@@ -308,4 +308,28 @@ describe("dictionary-compressed locations", () => {
     });
     expect(() => parseManifest(data)).toThrow(/declares a size over 1024/);
   });
+
+  it("rejects a compressed_location with a trailing/concatenated frame", () => {
+    // A valid small frame (the real fixture) followed by a second frame that
+    // advertises a huge size. fzstd would decode both and allocate for the
+    // second, so the guard must reject anything that isn't exactly one frame.
+    const secondFrame = new Uint8Array([
+      0x28, 0xb5, 0x2f, 0xfd, 0xa0, 0x80, 0x84, 0x1e, 0x00,
+    ]);
+    const concatenated = new Uint8Array([...COMPRESSED, ...secondFrame]);
+    const nodeId = mockNodeId(7);
+    const data = buildManifest({
+      dictionary: DICTIONARY,
+      compressionAlgorithm: 1,
+      arrays: [
+        {
+          nodeId,
+          refs: [
+            { index: [0], offset: 0, length: 1, compressed: concatenated },
+          ],
+        },
+      ],
+    });
+    expect(() => parseManifest(data)).toThrow(/declares a size over 1024/);
+  });
 });

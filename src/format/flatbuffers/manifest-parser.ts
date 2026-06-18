@@ -29,12 +29,15 @@ const MAX_DECOMPRESSED_LOCATION_SIZE = 1024;
 /**
  * Bytes that a zstd decoder allocates up front for `frame`, read from the frame
  * header: the advertised frame content size, falling back to the window size.
- * Mirrors the allocation in the vendored fzstd `rzfh`. Returns `Infinity` for a
- * missing/short/unrecognized header so callers reject rather than trust it.
+ * Mirrors the allocation in the vendored fzstd `rzfh`. Requires `frame` to be a
+ * single complete frame covering the whole input; returns `Infinity` for a
+ * missing/short/unrecognized header, a malformed block, or any trailing bytes
+ * (a concatenated second frame), so callers reject rather than trust it.
  *
  * Used to bound allocation *before* decompressing an untrusted
  * `compressed_location`: the size check on the decompressed output alone is too
- * late, since the decoder would already have allocated per the advertised size.
+ * late, since the decoder would already have allocated per the advertised size,
+ * and it decodes every concatenated frame.
  */
 function zstdFrameAllocSize(frame: Uint8Array): number {
   // Magic number 0xFD2FB528 (little-endian), then the frame header descriptor.
@@ -49,6 +52,7 @@ function zstdFrameAllocSize(frame: Uint8Array): number {
   }
   const flg = frame[4];
   const singleSegment = (flg >> 5) & 1;
+  const contentChecksum = (flg >> 2) & 1;
   const dictIdFlag = flg & 3;
   const contentSizeFlag = flg >> 6;
 
@@ -76,6 +80,28 @@ function zstdFrameAllocSize(frame: Uint8Array): number {
     if (contentSizeFlag === 1) contentSize += 256;
     if (singleSegment) windowSize = contentSize;
   }
+  pos += fcsBytes;
+
+  // Walk the data blocks to the frame end. `decompress()` decodes *every*
+  // concatenated frame and allocates per frame, so a first-frame-only size
+  // check is bypassable by appending a frame that advertises a huge size.
+  // Require exactly one complete frame covering the whole input; reject
+  // trailing bytes (a second frame) or any malformed block.
+  for (;;) {
+    if (pos + 3 > frame.length) return Infinity;
+    const blockHeader =
+      frame[pos] | (frame[pos + 1] << 8) | (frame[pos + 2] << 16);
+    pos += 3;
+    const lastBlock = blockHeader & 1;
+    const blockType = (blockHeader >> 1) & 3;
+    if (blockType === 3) return Infinity; // reserved block type
+    pos += blockType === 1 ? 1 : blockHeader >> 3; // RLE block content is 1 byte
+    if (pos > frame.length) return Infinity;
+    if (lastBlock) break;
+  }
+  if (contentChecksum) pos += 4;
+  if (pos !== frame.length) return Infinity; // trailing/concatenated frame
+
   return contentSize || windowSize;
 }
 
