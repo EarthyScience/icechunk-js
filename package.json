@@ -2,6 +2,9 @@
   "name": "icechunk-js",
   "version": "0.5.0",
   "description": "Read-only JavaScript/TypeScript reader for Icechunk repositories",
+  "engines": {
+    "node": ">=20"
+  },
   "publishConfig": {
     "access": "public"
   },
