@@ -7,7 +7,7 @@
 import { ByteBuffer } from "flatbuffers";
 import * as flexbuffers from "flatbuffers/js/flexbuffers.js";
 import { Repo as FbsRepo } from "./generated/repo.js";
-import { decompress } from "fzstd";
+import { decompress } from "../../vendor/fzstd/index.js";
 import {
   parseHeader,
   getDataAfterHeader,
