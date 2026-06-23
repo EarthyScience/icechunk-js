@@ -7,4 +7,4 @@ Publishing to npm runs in CI (`.github/workflows/publish.yaml`).
 3. `gh release create vX.Y.Z --generate-notes` — triggers the publish (the tag alone does not).
 4. CI installs, tests, builds, and publishes. Verify with `npm view icechunk-js version`.
 
-Manual fallback: `npm ci && npm run build && npm publish --access public`.
+Manual fallback (no provenance; prompts for your 2FA code): `npm ci && npm run build && npm publish --access public`.
