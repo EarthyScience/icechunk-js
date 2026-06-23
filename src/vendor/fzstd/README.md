@@ -39,13 +39,19 @@ stay byte-identical to upstream.
 
 **None.** This copy is byte-identical to the branch.
 
-A dictionary/output-buffer aliasing bug in the original PR (silent corruption
-when the dictionary-content length equals the decompressed size) was found here
-and fixed upstream via [handlerug/fzstd#1](https://github.com/handlerug/fzstd/pull/1),
-now merged into the branch — so there is no longer a local patch to re-apply.
-Regression coverage lives in
-`tests/format/flatbuffers/manifest-dictionary.test.ts` ("decodes a frame whose
-output aliases the dictionary buffer").
+Two bugs in the original PR were found here and fixed upstream, both now merged
+into the branch (so neither is a local patch to re-apply):
+
+- **Dictionary/output-buffer aliasing** — silent corruption when the
+  dictionary-content length equals the decompressed size; fixed via
+  [handlerug/fzstd#1](https://github.com/handlerug/fzstd/pull/1). Regression
+  coverage: the "decodes a frame whose output aliases the dictionary buffer" test.
+- **Dictionary history-window sizing** (`a6aacee`) — the window was sized to the
+  dictionary length, so any location longer than the manifest's dictionary threw
+  `RangeError: offset is out of bounds`; contributed from
+  `shane98c:fix/dictionary-window-size`. Regression coverage: the "decodes a
+  compressed_location longer than the dictionary" test in
+  `tests/format/flatbuffers/manifest-dictionary.test.ts`.
 
 > Note: the size-bound (`MAX_DECOMPRESSED_LOCATION_SIZE`) and UTF-8 strictness
 > guards are **not** here — they live in the consumer

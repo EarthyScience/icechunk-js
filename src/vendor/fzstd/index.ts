@@ -4,7 +4,7 @@
  *
  * Source: the unmerged dictionary-decompression PR #18
  * (https://github.com/101arrowz/fzstd/pull/18), branch
- * `handlerug:push-qxkytkvukoqs` @ 819999b, which adds the optional `dic`
+ * `handlerug:push-qxkytkvukoqs` @ a6aacee, which adds the optional `dic`
  * (dictionary) argument to `decompress()` and the `Decompress` stream.
  *
  * Why vendored: icechunk's dictionary-compressed virtual chunk locations need
@@ -15,9 +15,10 @@
  * See ../../format/flatbuffers/manifest-parser.ts.
  *
  * This copy is byte-identical to the branch — no local edits. The branch now
- * includes the dictionary/output-buffer aliasing fix (handlerug/fzstd#1, which
- * we contributed), so there is no longer a local patch to re-apply. To update,
- * re-vendor src/index.ts + LICENSE from the branch.
+ * includes both the dictionary/output-buffer aliasing fix (handlerug/fzstd#1)
+ * and the dictionary history-window sizing fix (a6aacee) — both found and
+ * contributed from here, now merged — so there is no longer a local patch to
+ * re-apply. To update, re-vendor src/index.ts + LICENSE from the branch.
  *
  * Verified: byte-exact vs released fzstd on all 244 icechunk fixtures, plus
  * correct dictionary decode vs the reference `zstd` CLI.
@@ -166,8 +167,10 @@ const rdic = (dic: Uint8Array, st: DZstdState) => {
     st.o = new i32([b4(dic, bt), b4(dic, bt + 4), b4(dic, bt + 8)]);
     dic = dic.subarray(bt + 12);
   }
-  st.w = dic.slice();
-  st.e = dic.length;
+  const wl = Math.max(dic.length, st.u ? Math.min(st.e, dic.length + st.u) : st.e);
+  st.w = new u8(wl);
+  st.w.set(dic, wl - dic.length);
+  st.e = wl;
 };
 
 // read Zstandard frame header

@@ -230,6 +230,36 @@ describe("dictionary-compressed locations", () => {
     }
   });
 
+  it("decodes a compressed_location longer than the dictionary", () => {
+    // The decoded location (612 B) is larger than the manifest dictionary
+    // (86 B). Upstream fzstd sized the history window to the dictionary length,
+    // so this threw "offset is out of bounds"; the vendored rdic patch sizes it
+    // to the reachable history (see src/vendor/fzstd/README.md). Fixtures were
+    // generated offline with the zstd CLI:
+    //   zstd -D longloc-dict.bin longloc.txt -o longloc.zst
+    const dictionary = fixture("longloc-dict.bin");
+    const compressed = fixture("longloc.zst");
+    const expected = new TextDecoder().decode(fixture("longloc.txt"));
+    const nodeId = mockNodeId(9);
+    const data = buildManifest({
+      dictionary,
+      compressionAlgorithm: 1,
+      arrays: [
+        {
+          nodeId,
+          refs: [{ index: [0], offset: 42, length: 7, compressed }],
+        },
+      ],
+    });
+    const ref = findChunkRef(parseManifest(data), nodeId, [0]);
+    expect(ref).not.toBeNull();
+    const payload = getChunkPayload(ref!);
+    expect(payload.type).toBe("virtual");
+    if (payload.type === "virtual") {
+      expect(payload.location).toBe(expected);
+    }
+  });
+
   it("throws when a compressed_location has no manifest dictionary", () => {
     const nodeId = mockNodeId(3);
     const data = buildManifest({
