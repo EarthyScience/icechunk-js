@@ -869,35 +869,25 @@ export function resolveVirtualChunkLocation(
         `Unknown virtual chunk container "${name}" referenced by ${location}`,
       );
     }
-    const prefix = container.urlPrefix.endsWith("/")
-      ? container.urlPrefix
-      : `${container.urlPrefix}/`;
-    return { url: prefix + relativePath, container };
+    return {
+      url: ensureTrailingSlash(container.urlPrefix) + relativePath,
+      container,
+    };
   }
 
-  const container = containers.find((c) => location.startsWith(c.urlPrefix));
+  // Match on a normalized (trailing-slash) prefix so a legacy prefix like
+  // `s3://bucket` can't claim a sibling such as `s3://bucket2/key`.
+  const container = containers.find((c) =>
+    location.startsWith(ensureTrailingSlash(c.urlPrefix)),
+  );
   return { url: location, container };
 }
 
-/**
- * Translate cloud storage URLs to HTTP(S) endpoints for public buckets.
- *
- * Supports:
- * - s3://bucket/key → https://bucket.s3.amazonaws.com/key (or path-style for dotted buckets)
- * - gs://bucket/key or gcs://bucket/key → https://storage.googleapis.com/bucket/key
- * - az://container/path or azure://container/path → https://{azureAccount}.blob.core.windows.net/container/path
- * - abfs://container@account.dfs.core.windows.net/path → https://account.blob.core.windows.net/container/path
- * - http(s):// URLs pass through unchanged
- *
- * Azure az:// and azure:// URLs follow the Rust convention where the host is
- * the container name (not the account). The account must be supplied separately
- * via the azureAccount parameter.
- *
- * Note: S3 addressing follows the container's store config (region, endpoint,
- * path-style); see `buildS3HttpUrl`. When no region is known, dotted-name
- * buckets use the global path-style endpoint, whose region redirect
- * `makeUrlStore` resolves at fetch time (server only).
- */
+/** Append a trailing `/` if absent, so prefix matches respect a path boundary. */
+function ensureTrailingSlash(prefix: string): string {
+  return prefix.endsWith("/") ? prefix : `${prefix}/`;
+}
+
 /**
  * Build an HTTPS URL for an `s3://bucket/key` location, honoring the
  * container's S3 store config (mirrors how Rust builds the request):
@@ -923,15 +913,45 @@ function buildS3HttpUrl(
   const region = s3?.region;
   const pathStyle = s3?.forcePathStyle === true || bucket.includes(".");
   if (pathStyle) {
-    const host = region ? `s3.${region}.amazonaws.com` : "s3.amazonaws.com";
+    const host = region
+      ? `s3.${region}.${awsEndpointSuffix(region)}`
+      : "s3.amazonaws.com";
     return `https://${host}/${bucket}/${key}`;
   }
   const host = region
-    ? `${bucket}.s3.${region}.amazonaws.com`
+    ? `${bucket}.s3.${region}.${awsEndpointSuffix(region)}`
     : `${bucket}.s3.amazonaws.com`;
   return `https://${host}/${key}`;
 }
 
+/**
+ * AWS partition endpoint suffix for an S3 region. China (`cn-*`) uses
+ * `amazonaws.com.cn`; GovCloud uses the commercial suffix, and ISO partitions
+ * are air-gapped (not web-reachable), so the commercial suffix covers them.
+ */
+function awsEndpointSuffix(region: string): string {
+  return region.startsWith("cn-") ? "amazonaws.com.cn" : "amazonaws.com";
+}
+
+/**
+ * Translate cloud storage URLs to HTTP(S) endpoints for public buckets.
+ *
+ * Supports:
+ * - s3://bucket/key → https://bucket.s3.amazonaws.com/key (or path-style for dotted buckets)
+ * - gs://bucket/key or gcs://bucket/key → https://storage.googleapis.com/bucket/key
+ * - az://container/path or azure://container/path → https://{azureAccount}.blob.core.windows.net/container/path
+ * - abfs://container@account.dfs.core.windows.net/path → https://account.blob.core.windows.net/container/path
+ * - http(s):// URLs pass through unchanged
+ *
+ * Azure az:// and azure:// URLs follow the Rust convention where the host is
+ * the container name (not the account). The account must be supplied separately
+ * via the azureAccount parameter.
+ *
+ * Note: S3 addressing follows the container's store config (region, endpoint,
+ * path-style); see `buildS3HttpUrl`. When no region is known, dotted-name
+ * buckets use the global path-style endpoint, whose region redirect
+ * `makeUrlStore` resolves at fetch time (server only).
+ */
 function translateToHttpUrl(
   url: string,
   options?: { azureAccount?: string; s3?: S3ContainerConfig },

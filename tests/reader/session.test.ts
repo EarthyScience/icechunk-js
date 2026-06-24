@@ -962,6 +962,32 @@ describe("ReadSession", () => {
       );
     });
 
+    it("uses the China partition suffix (amazonaws.com.cn) for cn- regions", async () => {
+      const fetchClient = mockVirtualFetchClient();
+      const session = createMockSession({
+        nodes: [],
+        virtualChunkContainers: [
+          {
+            name: null,
+            urlPrefix: "s3://cn.bucket/",
+            s3: { region: "cn-north-1" },
+          },
+        ],
+      }) as any;
+
+      await session.fetchChunkPayload(
+        virtualPayload("s3://cn.bucket/a/b.bin"),
+        {
+          fetchClient,
+        },
+      );
+
+      expect(fetchClient.fetch).toHaveBeenCalledWith(
+        "https://s3.cn-north-1.amazonaws.com.cn/cn.bucket/a/b.bin",
+        expect.any(Object),
+      );
+    });
+
     it("routes to a custom endpoint_url (path-style) for S3-compatible containers", async () => {
       const fetchClient = mockVirtualFetchClient();
       const session = createMockSession({

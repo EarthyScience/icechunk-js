@@ -35,6 +35,20 @@ describe("resolveVirtualChunkLocation", () => {
     expect(r.container?.s3).toEqual({ region: "us-west-2" });
   });
 
+  it("requires a path boundary, so a non-slash prefix can't claim a sibling bucket", () => {
+    const legacy: VirtualChunkContainer[] = [
+      { name: null, urlPrefix: "s3://testbucket", s3: { region: "us-east-1" } },
+    ];
+    // Sibling bucket must NOT match the boundary-less prefix.
+    expect(
+      resolveVirtualChunkLocation("s3://testbucket2/key", legacy).container,
+    ).toBeUndefined();
+    // The real bucket still matches (prefix is normalized to `s3://testbucket/`).
+    expect(
+      resolveVirtualChunkLocation("s3://testbucket/key", legacy).container?.s3,
+    ).toEqual({ region: "us-east-1" });
+  });
+
   it("prefers the most specific (longest) url_prefix match", () => {
     const overlapping: VirtualChunkContainer[] = [
       { name: null, urlPrefix: "s3://b/", s3: { region: "us-east-1" } },
