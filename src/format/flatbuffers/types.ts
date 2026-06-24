@@ -76,13 +76,23 @@ export interface ChunkRef {
   checksumLastModified: number;
 }
 
-/** Chunk references for a single array */
+/**
+ * Chunk references for a single array, resolved lazily from the manifest's
+ * FlatBuffer. Keeping refs in the buffer avoids building a JS object per chunk,
+ * which would OOM on large virtual shards.
+ */
 export interface ArrayManifest {
   /** Node ID of the array */
   nodeId: ObjectId8;
 
-  /** Chunk references, sorted by index */
-  refs: ChunkRef[];
+  /** Number of chunk refs (sorted by index). */
+  readonly numRefs: number;
+
+  /** Coordinate index of ref `i`, for the binary search in `findChunkRef`. */
+  refIndex(i: number): number[];
+
+  /** Materialize the full `ChunkRef` at position `i`. */
+  refAt(i: number): ChunkRef;
 }
 
 /** Manifest containing chunk references for multiple arrays */

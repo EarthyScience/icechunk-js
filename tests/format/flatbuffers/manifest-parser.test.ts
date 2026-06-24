@@ -8,6 +8,7 @@ import {
   getChunkPayload,
 } from "../../../src/format/flatbuffers/manifest-parser.js";
 import type {
+  ArrayManifest,
   Manifest,
   ChunkRef,
   ObjectId8,
@@ -29,6 +30,26 @@ function mockObjectId12(seed: number): Uint8Array {
     id[i] = (seed + i * 17) % 256;
   }
   return id;
+}
+
+/** Wrap an in-memory ChunkRef list as a lazy ArrayManifest for lookup tests. */
+function lazyArray(nodeId: ObjectId8, refs: ChunkRef[]): ArrayManifest {
+  return {
+    nodeId,
+    numRefs: refs.length,
+    refIndex: (i) => refs[i].index,
+    refAt: (i) => refs[i],
+  };
+}
+
+/** Build a Manifest from in-memory array specs. */
+function makeManifest(
+  arrays: { nodeId: ObjectId8; refs: ChunkRef[] }[],
+): Manifest {
+  return {
+    id: mockObjectId12(1) as Uint8Array,
+    arrays: arrays.map(({ nodeId, refs }) => lazyArray(nodeId, refs)),
+  };
 }
 
 /** Create a chunk ref with inline data */
@@ -87,15 +108,9 @@ describe("findChunkRef", () => {
   describe("binary search correctness", () => {
     it("should find chunk in single-element array", () => {
       const nodeId = mockNodeId(1);
-      const manifest: Manifest = {
-        id: mockObjectId12(1) as any,
-        arrays: [
-          {
-            nodeId,
-            refs: [inlineChunkRef([0], new Uint8Array([1, 2, 3]))],
-          },
-        ],
-      };
+      const manifest = makeManifest([
+        { nodeId, refs: [inlineChunkRef([0], new Uint8Array([1, 2, 3]))] },
+      ]);
 
       const result = findChunkRef(manifest, nodeId, [0]);
       expect(result).not.toBeNull();
@@ -104,19 +119,16 @@ describe("findChunkRef", () => {
 
     it("should find first element in sorted array", () => {
       const nodeId = mockNodeId(1);
-      const manifest: Manifest = {
-        id: mockObjectId12(1) as any,
-        arrays: [
-          {
-            nodeId,
-            refs: [
-              inlineChunkRef([0], new Uint8Array([1])),
-              inlineChunkRef([1], new Uint8Array([2])),
-              inlineChunkRef([2], new Uint8Array([3])),
-            ],
-          },
-        ],
-      };
+      const manifest = makeManifest([
+        {
+          nodeId,
+          refs: [
+            inlineChunkRef([0], new Uint8Array([1])),
+            inlineChunkRef([1], new Uint8Array([2])),
+            inlineChunkRef([2], new Uint8Array([3])),
+          ],
+        },
+      ]);
 
       const result = findChunkRef(manifest, nodeId, [0]);
       expect(result).not.toBeNull();
@@ -125,19 +137,16 @@ describe("findChunkRef", () => {
 
     it("should find last element in sorted array", () => {
       const nodeId = mockNodeId(1);
-      const manifest: Manifest = {
-        id: mockObjectId12(1) as any,
-        arrays: [
-          {
-            nodeId,
-            refs: [
-              inlineChunkRef([0], new Uint8Array([1])),
-              inlineChunkRef([1], new Uint8Array([2])),
-              inlineChunkRef([2], new Uint8Array([3])),
-            ],
-          },
-        ],
-      };
+      const manifest = makeManifest([
+        {
+          nodeId,
+          refs: [
+            inlineChunkRef([0], new Uint8Array([1])),
+            inlineChunkRef([1], new Uint8Array([2])),
+            inlineChunkRef([2], new Uint8Array([3])),
+          ],
+        },
+      ]);
 
       const result = findChunkRef(manifest, nodeId, [2]);
       expect(result).not.toBeNull();
@@ -146,21 +155,18 @@ describe("findChunkRef", () => {
 
     it("should find middle element in sorted array", () => {
       const nodeId = mockNodeId(1);
-      const manifest: Manifest = {
-        id: mockObjectId12(1) as any,
-        arrays: [
-          {
-            nodeId,
-            refs: [
-              inlineChunkRef([0], new Uint8Array([1])),
-              inlineChunkRef([1], new Uint8Array([2])),
-              inlineChunkRef([2], new Uint8Array([3])),
-              inlineChunkRef([3], new Uint8Array([4])),
-              inlineChunkRef([4], new Uint8Array([5])),
-            ],
-          },
-        ],
-      };
+      const manifest = makeManifest([
+        {
+          nodeId,
+          refs: [
+            inlineChunkRef([0], new Uint8Array([1])),
+            inlineChunkRef([1], new Uint8Array([2])),
+            inlineChunkRef([2], new Uint8Array([3])),
+            inlineChunkRef([3], new Uint8Array([4])),
+            inlineChunkRef([4], new Uint8Array([5])),
+          ],
+        },
+      ]);
 
       const result = findChunkRef(manifest, nodeId, [2]);
       expect(result).not.toBeNull();
@@ -169,18 +175,15 @@ describe("findChunkRef", () => {
 
     it("should return null for missing chunk", () => {
       const nodeId = mockNodeId(1);
-      const manifest: Manifest = {
-        id: mockObjectId12(1) as any,
-        arrays: [
-          {
-            nodeId,
-            refs: [
-              inlineChunkRef([0], new Uint8Array([1])),
-              inlineChunkRef([2], new Uint8Array([3])),
-            ],
-          },
-        ],
-      };
+      const manifest = makeManifest([
+        {
+          nodeId,
+          refs: [
+            inlineChunkRef([0], new Uint8Array([1])),
+            inlineChunkRef([2], new Uint8Array([3])),
+          ],
+        },
+      ]);
 
       const result = findChunkRef(manifest, nodeId, [1]);
       expect(result).toBeNull();
@@ -188,15 +191,7 @@ describe("findChunkRef", () => {
 
     it("should return null for empty refs array", () => {
       const nodeId = mockNodeId(1);
-      const manifest: Manifest = {
-        id: mockObjectId12(1) as any,
-        arrays: [
-          {
-            nodeId,
-            refs: [],
-          },
-        ],
-      };
+      const manifest = makeManifest([{ nodeId, refs: [] }]);
 
       const result = findChunkRef(manifest, nodeId, [0]);
       expect(result).toBeNull();
@@ -205,15 +200,9 @@ describe("findChunkRef", () => {
     it("should return null for non-existent array", () => {
       const nodeId1 = mockNodeId(1);
       const nodeId2 = mockNodeId(2);
-      const manifest: Manifest = {
-        id: mockObjectId12(1) as any,
-        arrays: [
-          {
-            nodeId: nodeId1,
-            refs: [inlineChunkRef([0], new Uint8Array([1]))],
-          },
-        ],
-      };
+      const manifest = makeManifest([
+        { nodeId: nodeId1, refs: [inlineChunkRef([0], new Uint8Array([1]))] },
+      ]);
 
       const result = findChunkRef(manifest, nodeId2, [0]);
       expect(result).toBeNull();
@@ -227,23 +216,11 @@ describe("findChunkRef", () => {
       const nodeId2 = new Uint8Array([0, 0, 0, 0, 0, 0, 0, 2]) as ObjectId8;
       const nodeId3 = new Uint8Array([0, 0, 0, 0, 0, 0, 0, 3]) as ObjectId8;
 
-      const manifest: Manifest = {
-        id: mockObjectId12(1) as any,
-        arrays: [
-          {
-            nodeId: nodeId1,
-            refs: [inlineChunkRef([0], new Uint8Array([10]))],
-          },
-          {
-            nodeId: nodeId2,
-            refs: [inlineChunkRef([0], new Uint8Array([20]))],
-          },
-          {
-            nodeId: nodeId3,
-            refs: [inlineChunkRef([0], new Uint8Array([30]))],
-          },
-        ],
-      };
+      const manifest = makeManifest([
+        { nodeId: nodeId1, refs: [inlineChunkRef([0], new Uint8Array([10]))] },
+        { nodeId: nodeId2, refs: [inlineChunkRef([0], new Uint8Array([20]))] },
+        { nodeId: nodeId3, refs: [inlineChunkRef([0], new Uint8Array([30]))] },
+      ]);
 
       const result = findChunkRef(manifest, nodeId1, [0]);
       expect(result).not.toBeNull();
@@ -255,23 +232,11 @@ describe("findChunkRef", () => {
       const nodeId2 = new Uint8Array([0, 0, 0, 0, 0, 0, 0, 2]) as ObjectId8;
       const nodeId3 = new Uint8Array([0, 0, 0, 0, 0, 0, 0, 3]) as ObjectId8;
 
-      const manifest: Manifest = {
-        id: mockObjectId12(1) as any,
-        arrays: [
-          {
-            nodeId: nodeId1,
-            refs: [inlineChunkRef([0], new Uint8Array([10]))],
-          },
-          {
-            nodeId: nodeId2,
-            refs: [inlineChunkRef([0], new Uint8Array([20]))],
-          },
-          {
-            nodeId: nodeId3,
-            refs: [inlineChunkRef([0], new Uint8Array([30]))],
-          },
-        ],
-      };
+      const manifest = makeManifest([
+        { nodeId: nodeId1, refs: [inlineChunkRef([0], new Uint8Array([10]))] },
+        { nodeId: nodeId2, refs: [inlineChunkRef([0], new Uint8Array([20]))] },
+        { nodeId: nodeId3, refs: [inlineChunkRef([0], new Uint8Array([30]))] },
+      ]);
 
       const result = findChunkRef(manifest, nodeId3, [0]);
       expect(result).not.toBeNull();
@@ -285,31 +250,13 @@ describe("findChunkRef", () => {
       const nodeId4 = new Uint8Array([0, 0, 0, 0, 0, 0, 0, 4]) as ObjectId8;
       const nodeId5 = new Uint8Array([0, 0, 0, 0, 0, 0, 0, 5]) as ObjectId8;
 
-      const manifest: Manifest = {
-        id: mockObjectId12(1) as any,
-        arrays: [
-          {
-            nodeId: nodeId1,
-            refs: [inlineChunkRef([0], new Uint8Array([10]))],
-          },
-          {
-            nodeId: nodeId2,
-            refs: [inlineChunkRef([0], new Uint8Array([20]))],
-          },
-          {
-            nodeId: nodeId3,
-            refs: [inlineChunkRef([0], new Uint8Array([30]))],
-          },
-          {
-            nodeId: nodeId4,
-            refs: [inlineChunkRef([0], new Uint8Array([40]))],
-          },
-          {
-            nodeId: nodeId5,
-            refs: [inlineChunkRef([0], new Uint8Array([50]))],
-          },
-        ],
-      };
+      const manifest = makeManifest([
+        { nodeId: nodeId1, refs: [inlineChunkRef([0], new Uint8Array([10]))] },
+        { nodeId: nodeId2, refs: [inlineChunkRef([0], new Uint8Array([20]))] },
+        { nodeId: nodeId3, refs: [inlineChunkRef([0], new Uint8Array([30]))] },
+        { nodeId: nodeId4, refs: [inlineChunkRef([0], new Uint8Array([40]))] },
+        { nodeId: nodeId5, refs: [inlineChunkRef([0], new Uint8Array([50]))] },
+      ]);
 
       const result = findChunkRef(manifest, nodeId3, [0]);
       expect(result).not.toBeNull();
@@ -324,23 +271,11 @@ describe("findChunkRef", () => {
         0, 0, 0, 0, 0, 0, 0, 2,
       ]) as ObjectId8;
 
-      const manifest: Manifest = {
-        id: mockObjectId12(1) as any,
-        arrays: [
-          {
-            nodeId: nodeId1,
-            refs: [inlineChunkRef([0], new Uint8Array([10]))],
-          },
-          {
-            nodeId: nodeId3,
-            refs: [inlineChunkRef([0], new Uint8Array([30]))],
-          },
-          {
-            nodeId: nodeId5,
-            refs: [inlineChunkRef([0], new Uint8Array([50]))],
-          },
-        ],
-      };
+      const manifest = makeManifest([
+        { nodeId: nodeId1, refs: [inlineChunkRef([0], new Uint8Array([10]))] },
+        { nodeId: nodeId3, refs: [inlineChunkRef([0], new Uint8Array([30]))] },
+        { nodeId: nodeId5, refs: [inlineChunkRef([0], new Uint8Array([50]))] },
+      ]);
 
       const result = findChunkRef(manifest, nodeIdMissing, [0]);
       expect(result).toBeNull();
@@ -351,13 +286,10 @@ describe("findChunkRef", () => {
       const nodeIdA = new Uint8Array([0, 0, 0, 0, 0, 0, 1, 0]) as ObjectId8; // Comes before
       const nodeIdB = new Uint8Array([0, 0, 0, 0, 0, 0, 2, 0]) as ObjectId8; // Comes after
 
-      const manifest: Manifest = {
-        id: mockObjectId12(1) as any,
-        arrays: [
-          { nodeId: nodeIdA, refs: [inlineChunkRef([0], new Uint8Array([1]))] },
-          { nodeId: nodeIdB, refs: [inlineChunkRef([0], new Uint8Array([2]))] },
-        ],
-      };
+      const manifest = makeManifest([
+        { nodeId: nodeIdA, refs: [inlineChunkRef([0], new Uint8Array([1]))] },
+        { nodeId: nodeIdB, refs: [inlineChunkRef([0], new Uint8Array([2]))] },
+      ]);
 
       expect(findChunkRef(manifest, nodeIdA, [0])!.inline).toEqual(
         new Uint8Array([1]),
@@ -371,20 +303,17 @@ describe("findChunkRef", () => {
   describe("multidimensional coordinates", () => {
     it("should find 2D chunk by coordinates", () => {
       const nodeId = mockNodeId(1);
-      const manifest: Manifest = {
-        id: mockObjectId12(1) as any,
-        arrays: [
-          {
-            nodeId,
-            refs: [
-              inlineChunkRef([0, 0], new Uint8Array([1])),
-              inlineChunkRef([0, 1], new Uint8Array([2])),
-              inlineChunkRef([1, 0], new Uint8Array([3])),
-              inlineChunkRef([1, 1], new Uint8Array([4])),
-            ],
-          },
-        ],
-      };
+      const manifest = makeManifest([
+        {
+          nodeId,
+          refs: [
+            inlineChunkRef([0, 0], new Uint8Array([1])),
+            inlineChunkRef([0, 1], new Uint8Array([2])),
+            inlineChunkRef([1, 0], new Uint8Array([3])),
+            inlineChunkRef([1, 1], new Uint8Array([4])),
+          ],
+        },
+      ]);
 
       expect(findChunkRef(manifest, nodeId, [0, 0])!.inline).toEqual(
         new Uint8Array([1]),
@@ -402,19 +331,16 @@ describe("findChunkRef", () => {
 
     it("should find 3D chunk by coordinates", () => {
       const nodeId = mockNodeId(1);
-      const manifest: Manifest = {
-        id: mockObjectId12(1) as any,
-        arrays: [
-          {
-            nodeId,
-            refs: [
-              inlineChunkRef([0, 0, 0], new Uint8Array([1])),
-              inlineChunkRef([0, 0, 1], new Uint8Array([2])),
-              inlineChunkRef([1, 2, 3], new Uint8Array([99])),
-            ],
-          },
-        ],
-      };
+      const manifest = makeManifest([
+        {
+          nodeId,
+          refs: [
+            inlineChunkRef([0, 0, 0], new Uint8Array([1])),
+            inlineChunkRef([0, 0, 1], new Uint8Array([2])),
+            inlineChunkRef([1, 2, 3], new Uint8Array([99])),
+          ],
+        },
+      ]);
 
       expect(findChunkRef(manifest, nodeId, [1, 2, 3])!.inline).toEqual(
         new Uint8Array([99]),
@@ -424,18 +350,15 @@ describe("findChunkRef", () => {
     it("should handle lexicographic ordering correctly", () => {
       const nodeId = mockNodeId(1);
       // [0, 10] comes before [1, 0] lexicographically
-      const manifest: Manifest = {
-        id: mockObjectId12(1) as any,
-        arrays: [
-          {
-            nodeId,
-            refs: [
-              inlineChunkRef([0, 10], new Uint8Array([1])),
-              inlineChunkRef([1, 0], new Uint8Array([2])),
-            ],
-          },
-        ],
-      };
+      const manifest = makeManifest([
+        {
+          nodeId,
+          refs: [
+            inlineChunkRef([0, 10], new Uint8Array([1])),
+            inlineChunkRef([1, 0], new Uint8Array([2])),
+          ],
+        },
+      ]);
 
       expect(findChunkRef(manifest, nodeId, [0, 10])!.inline).toEqual(
         new Uint8Array([1]),
