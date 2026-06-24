@@ -57,24 +57,44 @@ function expectedRangeLength(range: RangeQuery): number {
 }
 
 /**
+ * Map an S3 path-style global-endpoint region redirect to the regional URL to
+ * retry. For buckets outside `us-east-1`, `s3.amazonaws.com` answers 301 with
+ * no `Location` header (so `fetch` can't follow it) and reports the region in
+ * `x-amz-bucket-region`; this rebuilds the URL against `s3.<region>.amazonaws.com`.
+ * Returns null when the response isn't that redirect.
+ */
+function regionalS3RedirectUrl(url: string, response: Response): string | null {
+  if (response.status !== 301 && response.status !== 307) return null;
+  const region = response.headers.get("x-amz-bucket-region");
+  if (!region) return null;
+  const globalPrefix = "https://s3.amazonaws.com/";
+  if (!url.startsWith(globalPrefix)) return null;
+  return `https://s3.${region}.amazonaws.com/${url.slice(globalPrefix.length)}`;
+}
+
+/**
  * Build a minimal `AsyncReadable` that services every `getRange` by
  * fetching the configured URL with the requested byte range. The zarr
  * key is ignored — when wrapped by `withRangeCoalescing`, all requests
  * converge on the same path and become eligible for range-merging.
  */
 export function makeUrlStore(opts: MakeUrlStoreOptions): AsyncReadable {
-  const { url, fetchClient, conditionalHeaders } = opts;
+  const { fetchClient, conditionalHeaders } = opts;
+  // Hint shared across reads: once one read resolves an S3 regional redirect,
+  // later reads start from the regional host. Each read works off its own
+  // `requestUrl` copy, so this value is an optimization, not a source of truth.
+  let pinnedUrl = opts.url;
 
-  async function doFetch(init: RequestInit): Promise<Response> {
+  async function doFetch(target: string, init: RequestInit): Promise<Response> {
     return fetchClient
-      ? await fetchClient.fetch(url, init)
-      : await fetch(url, init);
+      ? await fetchClient.fetch(target, init)
+      : await fetch(target, init);
   }
 
   return {
     async get() {
       throw new Error(
-        `Virtual chunk URL store for ${url} only supports ranged reads`,
+        `Virtual chunk URL store for ${pinnedUrl} only supports ranged reads`,
       );
     },
     async getRange(_key, range, options) {
@@ -86,16 +106,36 @@ export function makeUrlStore(opts: MakeUrlStoreOptions): AsyncReadable {
           ? `bytes=-${range.suffixLength}`
           : `bytes=${range.offset}-${range.offset + range.length - 1}`;
 
-      const response = await doFetch({ headers, signal: options?.signal });
+      // Copy the endpoint locally so a concurrent read updating the shared pin
+      // can't change which URL this request detects and retries against.
+      let requestUrl = pinnedUrl;
+      let response = await doFetch(requestUrl, {
+        headers,
+        signal: options?.signal,
+      });
+
+      // Resolve a global-endpoint region redirect and retry once on the
+      // regional host, re-pinning it for later reads.
+      const regionalUrl = regionalS3RedirectUrl(requestUrl, response);
+      if (regionalUrl) {
+        // Free the discarded redirect body so Node can reuse the connection.
+        response.body?.cancel().catch(() => {});
+        requestUrl = regionalUrl;
+        pinnedUrl = regionalUrl;
+        response = await doFetch(requestUrl, {
+          headers,
+          signal: options?.signal,
+        });
+      }
 
       if (response.status === 412) {
         throw new Error(
-          `Virtual chunk at ${url} failed integrity check — data has been modified since snapshot was created`,
+          `Virtual chunk at ${requestUrl} failed integrity check — data has been modified since snapshot was created`,
         );
       }
       if (response.status !== 200 && response.status !== 206) {
         throw new Error(
-          `Failed to fetch virtual chunk from ${url}: ${response.status} ${response.statusText}`,
+          `Failed to fetch virtual chunk from ${requestUrl}: ${response.status} ${response.statusText}`,
         );
       }
 
@@ -108,7 +148,7 @@ export function makeUrlStore(opts: MakeUrlStoreOptions): AsyncReadable {
         const expected = expectedRangeLength(range);
         if (data.length === expected) return data;
         throw new Error(
-          `Virtual range response size mismatch for ${url}: expected ${expected} bytes, got ${data.length}`,
+          `Virtual range response size mismatch for ${requestUrl}: expected ${expected} bytes, got ${data.length}`,
         );
       }
 
@@ -119,7 +159,7 @@ export function makeUrlStore(opts: MakeUrlStoreOptions): AsyncReadable {
         const end = range.offset + range.length;
         if (data.length >= end) return data.slice(range.offset, end);
         throw new Error(
-          `Virtual range request not honored for ${url}: need at least ${end} bytes for fallback slicing, got ${data.length}`,
+          `Virtual range request not honored for ${requestUrl}: need at least ${end} bytes for fallback slicing, got ${data.length}`,
         );
       }
       // Suffix-length on a 200 fallback: take the trailing suffixLength bytes.
@@ -127,7 +167,7 @@ export function makeUrlStore(opts: MakeUrlStoreOptions): AsyncReadable {
         return data.slice(data.length - range.suffixLength);
       }
       throw new Error(
-        `Virtual suffix range request not honored for ${url}: need at least ${range.suffixLength} bytes for fallback slicing, got ${data.length}`,
+        `Virtual suffix range request not honored for ${requestUrl}: need at least ${range.suffixLength} bytes for fallback slicing, got ${data.length}`,
       );
     },
   };

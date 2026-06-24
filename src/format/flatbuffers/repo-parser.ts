@@ -19,17 +19,41 @@ import {
 
 const SUPPORTED_SPEC_VERSION = 2;
 
+/**
+ * S3 store config carried by a virtual chunk container, mirroring Rust's
+ * `S3Options`. Drives endpoint/addressing when translating `s3://` chunk
+ * locations to HTTPS — notably `region`, which lets dotted-name buckets
+ * address their regional endpoint directly (required for browser CORS, since
+ * the global endpoint's region redirect carries no CORS headers).
+ */
+export interface S3ContainerConfig {
+  region?: string;
+  endpointUrl?: string;
+  forcePathStyle?: boolean;
+}
+
+/**
+ * A virtual chunk container from the repo config, mirroring Rust's
+ * `VirtualChunkContainer`. `name` resolves `vcc://name/...` references;
+ * `urlPrefix` matches absolute chunk locations (longest prefix wins).
+ */
+export interface VirtualChunkContainer {
+  name: string | null;
+  urlPrefix: string;
+  s3?: S3ContainerConfig;
+}
+
 /** Parsed repo file with cached metadata */
 export interface ParsedRepo {
   repo: FbsRepo;
   specVersion: number;
   snapshotsLength: number; // Cached for bounds checking
   /**
-   * Map of Virtual Chunk Container name → `url_prefix` for resolving
-   * relative `vcc://name/path` chunk locations. Empty when the repo has
-   * no named containers (unnamed/legacy entries are excluded).
+   * Virtual chunk containers from the repo config, sorted by descending
+   * `urlPrefix` length so the most specific container matches an absolute
+   * location first. Empty when the repo declares no containers.
    */
-  virtualChunkContainers: Map<string, string>;
+  virtualChunkContainers: VirtualChunkContainer[];
 }
 
 /**
@@ -73,19 +97,19 @@ export function parseRepo(data: Uint8Array): ParsedRepo {
 }
 
 /**
- * Extract named Virtual Chunk Containers from the flexbuffers-encoded
- * RepositoryConfig on the repo table.
+ * Extract virtual chunk containers from the flexbuffers-encoded
+ * RepositoryConfig, including each container's S3 store config (region/
+ * endpoint/addressing). Unnamed containers are included too — they still
+ * match absolute chunk locations by `urlPrefix` even though they can't be
+ * referenced by `vcc://name`. Returned sorted by descending `urlPrefix`
+ * length so the most specific container matches first.
  *
- * Only containers with a non-null `name` are included — unnamed/legacy
- * containers cannot be referenced by `vcc://` URLs.
- *
- * Returns an empty map when the config is absent, malformed, or has no
- * named containers. Parsing failures are swallowed because virtual chunk
- * resolution is a best-effort path; callers that actually hit a `vcc://`
- * location with no matching name will surface a clear error at fetch time.
+ * Returns an empty array when the config is absent or malformed. Parsing
+ * failures are swallowed because virtual chunk resolution is best-effort; a
+ * `vcc://` location with no matching name surfaces a clear error at fetch time.
  */
-function parseVirtualChunkContainers(repo: FbsRepo): Map<string, string> {
-  const result = new Map<string, string>();
+function parseVirtualChunkContainers(repo: FbsRepo): VirtualChunkContainer[] {
+  const result: VirtualChunkContainer[] = [];
   const configBytes = repo.configArray();
   if (!configBytes || configBytes.length === 0) return result;
 
@@ -106,12 +130,35 @@ function parseVirtualChunkContainers(repo: FbsRepo): Map<string, string> {
 
   for (const container of Object.values(containers)) {
     if (!isRecord(container)) continue;
-    const { name, url_prefix: urlPrefix } = container;
-    if (typeof name !== "string" || typeof urlPrefix !== "string") continue;
-    result.set(name, urlPrefix);
+    const urlPrefix = container.url_prefix;
+    if (typeof urlPrefix !== "string") continue;
+    const name = typeof container.name === "string" ? container.name : null;
+    const s3 = parseS3Store(container.store);
+    result.push(s3 ? { name, urlPrefix, s3 } : { name, urlPrefix });
   }
 
+  // Most specific (longest) url_prefix first, so absolute-location matching
+  // prefers the narrowest container.
+  result.sort((a, b) => b.urlPrefix.length - a.urlPrefix.length);
   return result;
+}
+
+/**
+ * Parse the S3-family store config from a container's `store`. The `s3`,
+ * `s3_compatible`, and `tigris` ObjectStoreConfig variants all share Rust's
+ * `S3Options` shape; gcs/azure/http/local stores yield undefined.
+ */
+function parseS3Store(store: unknown): S3ContainerConfig | undefined {
+  if (!isRecord(store)) return undefined;
+  const s3 = store.s3 ?? store.s3_compatible ?? store.tigris;
+  if (!isRecord(s3)) return undefined;
+  const cfg: S3ContainerConfig = {};
+  if (typeof s3.region === "string") cfg.region = s3.region;
+  if (typeof s3.endpoint_url === "string") cfg.endpointUrl = s3.endpoint_url;
+  if (typeof s3.force_path_style === "boolean") {
+    cfg.forcePathStyle = s3.force_path_style;
+  }
+  return cfg;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

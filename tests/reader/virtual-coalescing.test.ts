@@ -87,6 +87,7 @@ function createMockSession(options: { storage?: MockStorage } = {}): any {
   session.manifestLoader = singleFlight(session.manifestCache);
   session.nextFetchClientId = 1;
   session.nextRangeCoalescerId = 1;
+  session.virtualChunkContainers = [];
   return session;
 }
 

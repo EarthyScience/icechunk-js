@@ -19,6 +19,7 @@ import type {
   NodeSnapshot,
   ArrayNodeData,
 } from "../../src/format/flatbuffers/types.js";
+import type { VirtualChunkContainer } from "../../src/format/flatbuffers/repo-parser.js";
 
 // ESM equivalent of __dirname
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -62,7 +63,7 @@ function createMockSession(options: {
   nodes?: NodeSnapshot[];
   storage?: MockStorage;
   specVersion?: SpecVersion;
-  virtualChunkContainers?: Map<string, string>;
+  virtualChunkContainers?: VirtualChunkContainer[];
 }): ReadSession {
   const mockSnapshot: Snapshot = {
     id: createMockSnapshotId(1) as any,
@@ -81,10 +82,31 @@ function createMockSession(options: {
   session.manifestCache = new Map();
   session.manifestLoader = singleFlight(session.manifestCache);
   session.nextFetchClientId = 1;
-  session.virtualChunkContainers =
-    options.virtualChunkContainers ?? new Map<string, string>();
+  session.virtualChunkContainers = options.virtualChunkContainers ?? [];
 
   return session;
+}
+
+/** A fetchClient whose fetch resolves a 206 with `length` bytes. */
+function mockVirtualFetchClient(length = 7) {
+  return {
+    fetch: vi.fn().mockResolvedValue({
+      ok: true,
+      status: 206,
+      arrayBuffer: vi.fn().mockResolvedValue(new Uint8Array(length).buffer),
+    } as any),
+  };
+}
+
+function virtualPayload(location: string, length = 7) {
+  return {
+    type: "virtual" as const,
+    location,
+    offset: 0,
+    length,
+    checksumEtag: null,
+    checksumLastModified: 0,
+  };
 }
 
 /** Helper to create a group node */
@@ -665,9 +687,9 @@ describe("ReadSession", () => {
 
       const session = createMockSession({
         nodes: [],
-        virtualChunkContainers: new Map([
-          ["my-data", "https://example.com/data/"],
-        ]),
+        virtualChunkContainers: [
+          { name: "my-data", urlPrefix: "https://example.com/data/" },
+        ],
       }) as any;
 
       const payload = {
@@ -690,7 +712,9 @@ describe("ReadSession", () => {
     it("throws a clear error when a vcc:// URL references an unknown container", async () => {
       const session = createMockSession({
         nodes: [],
-        virtualChunkContainers: new Map([["known", "https://example.com/"]]),
+        virtualChunkContainers: [
+          { name: "known", urlPrefix: "https://example.com/" },
+        ],
       }) as any;
 
       const payload = {
@@ -868,6 +892,122 @@ describe("ReadSession", () => {
 
       await expect(session.fetchChunkPayload(payload)).rejects.toThrow(
         "azureAccount option is required",
+      );
+    });
+
+    it("uses the container region for dotted-name s3:// buckets (regional path-style)", async () => {
+      const fetchClient = mockVirtualFetchClient();
+      const session = createMockSession({
+        nodes: [],
+        virtualChunkContainers: [
+          {
+            name: null,
+            urlPrefix: "s3://us-west-2.example/",
+            s3: { region: "us-west-2" },
+          },
+        ],
+      }) as any;
+
+      await session.fetchChunkPayload(
+        virtualPayload("s3://us-west-2.example/a/b.bin"),
+        { fetchClient },
+      );
+
+      expect(fetchClient.fetch).toHaveBeenCalledWith(
+        "https://s3.us-west-2.amazonaws.com/us-west-2.example/a/b.bin",
+        expect.any(Object),
+      );
+    });
+
+    it("falls back to the global endpoint for dotted buckets without a container region", async () => {
+      const fetchClient = mockVirtualFetchClient();
+      const session = createMockSession({
+        nodes: [],
+        virtualChunkContainers: [
+          { name: null, urlPrefix: "s3://dotted.example/" },
+        ],
+      }) as any;
+
+      await session.fetchChunkPayload(
+        virtualPayload("s3://dotted.example/a/b.bin"),
+        { fetchClient },
+      );
+
+      expect(fetchClient.fetch).toHaveBeenCalledWith(
+        "https://s3.amazonaws.com/dotted.example/a/b.bin",
+        expect.any(Object),
+      );
+    });
+
+    it("uses the regional virtual-hosted host for simple buckets with a region", async () => {
+      const fetchClient = mockVirtualFetchClient();
+      const session = createMockSession({
+        nodes: [],
+        virtualChunkContainers: [
+          {
+            name: null,
+            urlPrefix: "s3://simple/",
+            s3: { region: "eu-west-1" },
+          },
+        ],
+      }) as any;
+
+      await session.fetchChunkPayload(virtualPayload("s3://simple/a/b.bin"), {
+        fetchClient,
+      });
+
+      expect(fetchClient.fetch).toHaveBeenCalledWith(
+        "https://simple.s3.eu-west-1.amazonaws.com/a/b.bin",
+        expect.any(Object),
+      );
+    });
+
+    it("uses the China partition suffix (amazonaws.com.cn) for cn- regions", async () => {
+      const fetchClient = mockVirtualFetchClient();
+      const session = createMockSession({
+        nodes: [],
+        virtualChunkContainers: [
+          {
+            name: null,
+            urlPrefix: "s3://cn.bucket/",
+            s3: { region: "cn-north-1" },
+          },
+        ],
+      }) as any;
+
+      await session.fetchChunkPayload(
+        virtualPayload("s3://cn.bucket/a/b.bin"),
+        {
+          fetchClient,
+        },
+      );
+
+      expect(fetchClient.fetch).toHaveBeenCalledWith(
+        "https://s3.cn-north-1.amazonaws.com.cn/cn.bucket/a/b.bin",
+        expect.any(Object),
+      );
+    });
+
+    it("routes to a custom endpoint_url (path-style) for S3-compatible containers", async () => {
+      const fetchClient = mockVirtualFetchClient();
+      const session = createMockSession({
+        nodes: [],
+        virtualChunkContainers: [
+          {
+            name: null,
+            urlPrefix: "s3://mybucket/",
+            s3: { endpointUrl: "http://localhost:9000", forcePathStyle: true },
+          },
+        ],
+      }) as any;
+
+      await session.fetchChunkPayload(virtualPayload("s3://mybucket/a/b.bin"), {
+        fetchClient,
+      });
+
+      expect(fetchClient.fetch).toHaveBeenCalledWith(
+        "http://localhost:9000/mybucket/a/b.bin",
+        expect.any(Object),
       );
     });
   });

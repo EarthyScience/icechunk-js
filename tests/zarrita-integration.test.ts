@@ -496,7 +496,9 @@ describe("Zarrita Integration", () => {
       const originalFetch = globalThis.fetch;
       vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
         const url = typeof input === "string" ? input : input.toString();
-        if (url.includes("testbucket.s3.amazonaws.com")) {
+        // The v2 repo config routes this container to its configured
+        // endpoint_url (a path-style S3-compatible host), not AWS.
+        if (url.includes("localhost:4200/testbucket")) {
           return new Response(chunkBytes.buffer.slice(0), {
             status: 206,
             headers: { "Content-Type": "application/octet-stream" },

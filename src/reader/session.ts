@@ -46,6 +46,10 @@ import {
   type AsyncReadable,
   type RangeCoalescingFn,
 } from "./range-coalescer.js";
+import type {
+  VirtualChunkContainer,
+  S3ContainerConfig,
+} from "../format/flatbuffers/repo-parser.js";
 
 /** Default byte-gap threshold for zarrita's range coalescer (matches its own default). */
 const RANGE_COALESCE_SIZE = 32 * 1024;
@@ -108,22 +112,22 @@ export class ReadSession {
   private nextFetchClientId = 1;
   private rangeCoalescerIds?: WeakMap<RangeCoalescingFn, number>;
   private nextRangeCoalescerId = 1;
-  /** VCC name → url_prefix map for resolving `vcc://` chunk locations. */
-  private virtualChunkContainers: Map<string, string>;
+  /** Virtual chunk containers (from repo config) for resolving chunk locations. */
+  private virtualChunkContainers: VirtualChunkContainer[];
 
   private constructor(
     storage: Storage,
     snapshot: Snapshot,
     specVersion: SpecVersion,
     maxManifestCacheSize: number = 100,
-    virtualChunkContainers?: Map<string, string>,
+    virtualChunkContainers?: VirtualChunkContainer[],
   ) {
     this.storage = storage;
     this.snapshot = snapshot;
     this.specVersion = specVersion;
     this.manifestCache = new LRUCache(maxManifestCacheSize);
     this.manifestLoader = singleFlight(this.manifestCache);
-    this.virtualChunkContainers = virtualChunkContainers ?? new Map();
+    this.virtualChunkContainers = virtualChunkContainers ?? [];
   }
 
   private getFetchClientKey(fetchClient: FetchClient | undefined): string {
@@ -256,7 +260,7 @@ export class ReadSession {
     snapshotId: Uint8Array,
     options?: RequestOptions & {
       maxManifestCacheSize?: number;
-      virtualChunkContainers?: Map<string, string>;
+      virtualChunkContainers?: VirtualChunkContainer[];
     },
   ): Promise<ReadSession> {
     const { snapshot, specVersion } = await ReadSession.loadSnapshot(
@@ -637,14 +641,15 @@ export class ReadSession {
       case "virtual": {
         // Virtual chunks reference external URLs
         // Expand any vcc://name/path → absolute URL, then translate s3:// etc. → HTTPS
-        const absoluteLocation = expandVccUrl(
-          payload.location,
-          this.virtualChunkContainers,
-        );
-        const httpUrl = translateToHttpUrl(
-          absoluteLocation,
-          options?.azureAccount,
-        );
+        const { url: absoluteLocation, container } =
+          resolveVirtualChunkLocation(
+            payload.location,
+            this.virtualChunkContainers,
+          );
+        const httpUrl = translateToHttpUrl(absoluteLocation, {
+          azureAccount: options?.azureAccount,
+          s3: container?.s3,
+        });
 
         const store = await this.getVirtualStoreForPayload(
           httpUrl,
@@ -724,14 +729,15 @@ export class ReadSession {
         const absoluteStart = payload.offset + rangeStart;
         const expectedSize = rangeEnd - rangeStart;
 
-        const absoluteLocation = expandVccUrl(
-          payload.location,
-          this.virtualChunkContainers,
-        );
-        const httpUrl = translateToHttpUrl(
-          absoluteLocation,
-          options?.azureAccount,
-        );
+        const { url: absoluteLocation, container } =
+          resolveVirtualChunkLocation(
+            payload.location,
+            this.virtualChunkContainers,
+          );
+        const httpUrl = translateToHttpUrl(absoluteLocation, {
+          azureAccount: options?.azureAccount,
+          s3: container?.s3,
+        });
 
         const store = await this.getVirtualStoreForPayload(
           httpUrl,
@@ -823,52 +829,108 @@ function compareUtf8Bytes(a: string, b: string): number {
 const VCC_SCHEME = "vcc://";
 
 /**
- * Expand a `vcc://name/relative/path` chunk location to an absolute URL using
- * the repo's Virtual Chunk Container map. Pass-through for any location that
- * doesn't start with `vcc://`.
+ * Resolve a virtual chunk location to an absolute URL and its matching
+ * container. `vcc://name/...` references resolve by container name; absolute
+ * locations match the container whose `urlPrefix` is a prefix (the list is
+ * pre-sorted longest-first, so the most specific wins). The matched
+ * container's S3 store config drives endpoint/region selection in
+ * `translateToHttpUrl`.
  *
- * When the map is empty (e.g. a `ReadSession` constructed without a
- * `Repository`), vcc:// locations pass through unchanged so a caller's
- * `fetchClient` can still handle them. When the map is non-empty but the
- * referenced name is missing, we throw — that signals a real config /
- * manifest mismatch the caller should surface.
+ * Pass-through with no container when the location isn't `vcc://` and no
+ * prefix matches, or when there are no containers at all (e.g. a `ReadSession`
+ * built without a `Repository`, where a caller's `fetchClient` resolves
+ * `vcc://` itself).
  *
- * Persisted repo configs may contain legacy/migrated prefixes without a
- * trailing slash. Normalize those before joining so `vcc://name/path`
- * resolves under the configured container root instead of being appended to
- * the last prefix segment.
+ * Persisted configs may carry legacy prefixes without a trailing slash;
+ * normalize before joining so `vcc://name/path` resolves under the container
+ * root rather than against the last prefix segment.
  *
- * @throws Error when the URL is malformed or the name is unknown despite a
- *   populated container map.
+ * @throws Error when a `vcc://` URL is malformed, or names an unknown
+ *   container despite a populated container list.
  */
-export function expandVccUrl(
+export function resolveVirtualChunkLocation(
   location: string,
-  containers: Map<string, string>,
+  containers: VirtualChunkContainer[],
+): { url: string; container?: VirtualChunkContainer } {
+  if (location.startsWith(VCC_SCHEME)) {
+    const rest = location.slice(VCC_SCHEME.length);
+    const slash = rest.indexOf("/");
+    if (slash === -1) {
+      throw new Error(
+        `Invalid vcc:// URL "${location}": missing "/" after container name`,
+      );
+    }
+    const name = rest.slice(0, slash);
+    const relativePath = rest.slice(slash + 1);
+    const container = containers.find((c) => c.name === name);
+    if (!container) {
+      if (containers.length === 0) return { url: location };
+      throw new Error(
+        `Unknown virtual chunk container "${name}" referenced by ${location}`,
+      );
+    }
+    return {
+      url: ensureTrailingSlash(container.urlPrefix) + relativePath,
+      container,
+    };
+  }
+
+  // Match on a normalized (trailing-slash) prefix so a legacy prefix like
+  // `s3://bucket` can't claim a sibling such as `s3://bucket2/key`.
+  const container = containers.find((c) =>
+    location.startsWith(ensureTrailingSlash(c.urlPrefix)),
+  );
+  return { url: location, container };
+}
+
+/** Append a trailing `/` if absent, so prefix matches respect a path boundary. */
+function ensureTrailingSlash(prefix: string): string {
+  return prefix.endsWith("/") ? prefix : `${prefix}/`;
+}
+
+/**
+ * Build an HTTPS URL for an `s3://bucket/key` location, honoring the
+ * container's S3 store config (mirrors how Rust builds the request):
+ *
+ * - `endpointUrl` (S3-compatible / Tigris) overrides the host, path-style.
+ * - dotted bucket names force path-style — virtual-hosted breaks TLS cert
+ *   validation; `forcePathStyle` forces it for any bucket.
+ * - `region`, when known, targets the regional endpoint directly. This is
+ *   required for browser reads of dotted buckets: the global endpoint's
+ *   region redirect carries no CORS headers, so the browser can't follow it.
+ *   Without a region we use the global endpoint and `makeUrlStore` resolves
+ *   the redirect at fetch time (works server-side only).
+ */
+function buildS3HttpUrl(
+  bucket: string,
+  key: string,
+  s3?: S3ContainerConfig,
 ): string {
-  if (!location.startsWith(VCC_SCHEME)) return location;
-
-  const rest = location.slice(VCC_SCHEME.length);
-  const slash = rest.indexOf("/");
-  if (slash === -1) {
-    throw new Error(
-      `Invalid vcc:// URL "${location}": missing "/" after container name`,
-    );
+  if (s3?.endpointUrl) {
+    const base = s3.endpointUrl.replace(/\/+$/, "");
+    return `${base}/${bucket}/${key}`;
   }
-
-  const name = rest.slice(0, slash);
-  const relativePath = rest.slice(slash + 1);
-  const urlPrefix = containers.get(name);
-  if (urlPrefix === undefined) {
-    if (containers.size === 0) return location;
-    throw new Error(
-      `Unknown virtual chunk container "${name}" referenced by ${location}`,
-    );
+  const region = s3?.region;
+  const pathStyle = s3?.forcePathStyle === true || bucket.includes(".");
+  if (pathStyle) {
+    const host = region
+      ? `s3.${region}.${awsEndpointSuffix(region)}`
+      : "s3.amazonaws.com";
+    return `https://${host}/${bucket}/${key}`;
   }
+  const host = region
+    ? `${bucket}.s3.${region}.${awsEndpointSuffix(region)}`
+    : `${bucket}.s3.amazonaws.com`;
+  return `https://${host}/${key}`;
+}
 
-  const normalizedPrefix = urlPrefix.endsWith("/")
-    ? urlPrefix
-    : `${urlPrefix}/`;
-  return normalizedPrefix + relativePath;
+/**
+ * AWS partition endpoint suffix for an S3 region. China (`cn-*`) uses
+ * `amazonaws.com.cn`; GovCloud uses the commercial suffix, and ISO partitions
+ * are air-gapped (not web-reachable), so the commercial suffix covers them.
+ */
+function awsEndpointSuffix(region: string): string {
+  return region.startsWith("cn-") ? "amazonaws.com.cn" : "amazonaws.com";
 }
 
 /**
@@ -885,31 +947,24 @@ export function expandVccUrl(
  * the container name (not the account). The account must be supplied separately
  * via the azureAccount parameter.
  *
- * Note: S3 URLs use virtual-hosted style for simple bucket names, but fall back to
- * path-style for buckets containing dots (which break SSL certificate validation).
- * For buckets in specific regions, S3 will redirect to the correct endpoint.
+ * Note: S3 addressing follows the container's store config (region, endpoint,
+ * path-style); see `buildS3HttpUrl`. When no region is known, dotted-name
+ * buckets use the global path-style endpoint, whose region redirect
+ * `makeUrlStore` resolves at fetch time (server only).
  */
-function translateToHttpUrl(url: string, azureAccount?: string): string {
-  // S3: s3://bucket/key → https://bucket.s3.amazonaws.com/key
-  // For buckets with dots, use path-style: https://s3.amazonaws.com/bucket/key
+function translateToHttpUrl(
+  url: string,
+  options?: { azureAccount?: string; s3?: S3ContainerConfig },
+): string {
+  const azureAccount = options?.azureAccount;
+  // S3: addressing is driven by the container's S3 store config — see
+  // buildS3HttpUrl for the virtual-hosted vs path-style and region rules.
   if (url.startsWith("s3://")) {
     const rest = url.slice(5); // Remove 's3://'
     const slashIndex = rest.indexOf("/");
-    if (slashIndex === -1) {
-      // Just bucket, no key
-      const bucket = rest;
-      if (bucket.includes(".")) {
-        return `https://s3.amazonaws.com/${bucket}/`;
-      }
-      return `https://${bucket}.s3.amazonaws.com/`;
-    }
-    const bucket = rest.slice(0, slashIndex);
-    const key = rest.slice(slashIndex + 1);
-    // Use path-style for buckets with dots (virtual-hosted fails SSL validation)
-    if (bucket.includes(".")) {
-      return `https://s3.amazonaws.com/${bucket}/${key}`;
-    }
-    return `https://${bucket}.s3.amazonaws.com/${key}`;
+    const bucket = slashIndex === -1 ? rest : rest.slice(0, slashIndex);
+    const key = slashIndex === -1 ? "" : rest.slice(slashIndex + 1);
+    return buildS3HttpUrl(bucket, key, options?.s3);
   }
 
   // GCS: gs://bucket/key or gcs://bucket/key → https://storage.googleapis.com/bucket/key
