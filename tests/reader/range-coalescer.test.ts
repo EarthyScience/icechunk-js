@@ -121,6 +121,37 @@ describe("range coalescer adapters", () => {
     fetchSpy.mockRestore();
   });
 
+  it("cancels the discarded redirect body before retrying", async () => {
+    const globalUrl = "https://s3.amazonaws.com/dotted.bucket/data.bin";
+    const regionalUrl =
+      "https://s3.eu-west-1.amazonaws.com/dotted.bucket/data.bin";
+    const cancel = vi.fn().mockResolvedValue(undefined);
+    const redirect = {
+      status: 301,
+      statusText: "Moved Permanently",
+      headers: {
+        get: (name: string) =>
+          name.toLowerCase() === "x-amz-bucket-region" ? "eu-west-1" : null,
+      },
+      body: { cancel },
+      arrayBuffer: vi.fn().mockResolvedValue(new ArrayBuffer(0)),
+    } as unknown as Response;
+    const body = new Uint8Array([9]);
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(redirect)
+      .mockResolvedValueOnce(mockFetchResponse(206, body));
+    const store = makeUrlStore({ url: globalUrl });
+
+    const result = await store.getRange("/", { offset: 0, length: 1 });
+
+    expect(result).toEqual(body);
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(fetchSpy).toHaveBeenNthCalledWith(2, regionalUrl, expect.anything());
+
+    fetchSpy.mockRestore();
+  });
+
   it("retries both reads when concurrent requests hit the global endpoint", async () => {
     const globalUrl =
       "https://s3.amazonaws.com/us-west-2.opendata.source.coop/data.bin";

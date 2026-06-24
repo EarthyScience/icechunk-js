@@ -118,6 +118,8 @@ export function makeUrlStore(opts: MakeUrlStoreOptions): AsyncReadable {
       // regional host, re-pinning it for later reads.
       const regionalUrl = regionalS3RedirectUrl(requestUrl, response);
       if (regionalUrl) {
+        // Free the discarded redirect body so Node can reuse the connection.
+        response.body?.cancel().catch(() => {});
         requestUrl = regionalUrl;
         pinnedUrl = regionalUrl;
         response = await doFetch(requestUrl, {
