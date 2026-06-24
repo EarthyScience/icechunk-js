@@ -18,10 +18,15 @@ function toArrayBuffer(data: Uint8Array): ArrayBuffer {
   ) as ArrayBuffer;
 }
 
-function mockFetchResponse(status: number, data: Uint8Array): Response {
+function mockFetchResponse(
+  status: number,
+  data: Uint8Array,
+  headers: Record<string, string> = {},
+): Response {
   return {
     status,
     statusText: status === 206 ? "Partial Content" : "OK",
+    headers: { get: (name: string) => headers[name.toLowerCase()] ?? null },
     arrayBuffer: vi.fn().mockResolvedValue(toArrayBuffer(data)),
   } as unknown as Response;
 }
@@ -61,6 +66,93 @@ describe("range coalescer adapters", () => {
       signal: undefined,
     });
     expect(result).toEqual(body);
+
+    fetchSpy.mockRestore();
+  });
+
+  it("retries the regional endpoint when the S3 global endpoint 301-redirects", async () => {
+    const globalUrl =
+      "https://s3.amazonaws.com/us-west-2.opendata.source.coop/data.bin";
+    const regionalUrl =
+      "https://s3.us-west-2.amazonaws.com/us-west-2.opendata.source.coop/data.bin";
+    const body = new Uint8Array([1, 2, 3]);
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        mockFetchResponse(301, new Uint8Array(), {
+          "x-amz-bucket-region": "us-west-2",
+        }),
+      )
+      .mockResolvedValueOnce(mockFetchResponse(206, body));
+    const store = makeUrlStore({ url: globalUrl });
+
+    const result = await store.getRange("/", { offset: 0, length: 3 });
+
+    expect(result).toEqual(body);
+    expect(fetchSpy).toHaveBeenNthCalledWith(1, globalUrl, expect.anything());
+    expect(fetchSpy).toHaveBeenNthCalledWith(2, regionalUrl, expect.anything());
+
+    fetchSpy.mockRestore();
+  });
+
+  it("pins the regional endpoint for later reads after one redirect", async () => {
+    const globalUrl =
+      "https://s3.amazonaws.com/eu-central-1.example.bucket/data.bin";
+    const regionalUrl =
+      "https://s3.eu-central-1.amazonaws.com/eu-central-1.example.bucket/data.bin";
+    const body = new Uint8Array([4, 5, 6]);
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        mockFetchResponse(301, new Uint8Array(), {
+          "x-amz-bucket-region": "eu-central-1",
+        }),
+      )
+      .mockResolvedValue(mockFetchResponse(206, body));
+    const store = makeUrlStore({ url: globalUrl });
+
+    await store.getRange("/", { offset: 0, length: 3 });
+    await store.getRange("/", { offset: 0, length: 3 });
+
+    // First read redirects (global → regional); second read goes straight to regional.
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+    expect(fetchSpy).toHaveBeenNthCalledWith(3, regionalUrl, expect.anything());
+
+    fetchSpy.mockRestore();
+  });
+
+  it("retries both reads when concurrent requests hit the global endpoint", async () => {
+    const globalUrl =
+      "https://s3.amazonaws.com/us-west-2.opendata.source.coop/data.bin";
+    const regionalUrl =
+      "https://s3.us-west-2.amazonaws.com/us-west-2.opendata.source.coop/data.bin";
+    const body = new Uint8Array([1, 2, 3]);
+    // Mock by target URL, not call order: the global endpoint always 301s,
+    // the regional endpoint always serves. This reproduces two in-flight
+    // reads both starting against the global host before either resolves.
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async (input) => {
+        const target = String(input);
+        if (target === globalUrl) {
+          return mockFetchResponse(301, new Uint8Array(), {
+            "x-amz-bucket-region": "us-west-2",
+          });
+        }
+        if (target === regionalUrl) return mockFetchResponse(206, body);
+        throw new Error(`unexpected fetch URL: ${target}`);
+      });
+    const store = makeUrlStore({ url: globalUrl });
+
+    // Both reads snapshot the global URL before either resolves its redirect;
+    // each must detect and retry against the regional host independently.
+    const [a, b] = await Promise.all([
+      store.getRange("/", { offset: 0, length: 3 }),
+      store.getRange("/", { offset: 0, length: 3 }),
+    ]);
+
+    expect(a).toEqual(body);
+    expect(b).toEqual(body);
 
     fetchSpy.mockRestore();
   });

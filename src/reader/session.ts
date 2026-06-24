@@ -886,8 +886,9 @@ export function expandVccUrl(
  * via the azureAccount parameter.
  *
  * Note: S3 URLs use virtual-hosted style for simple bucket names, but fall back to
- * path-style for buckets containing dots (which break SSL certificate validation).
- * For buckets in specific regions, S3 will redirect to the correct endpoint.
+ * path-style on the global endpoint for buckets containing dots (which break SSL
+ * certificate validation). For such buckets outside us-east-1 the global endpoint
+ * redirects to a regional one, which `makeUrlStore` resolves at fetch time.
  */
 function translateToHttpUrl(url: string, azureAccount?: string): string {
   // S3: s3://bucket/key → https://bucket.s3.amazonaws.com/key
