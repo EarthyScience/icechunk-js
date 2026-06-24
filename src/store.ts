@@ -64,7 +64,15 @@ export interface IcechunkStoreOptions {
    */
   fetchClient?: FetchClient;
 
-  /** Maximum number of manifests to cache in the LRU cache (default: 100) */
+  /**
+   * Maximum number of manifests to keep in the LRU cache (default: 100).
+   *
+   * This bounds the *number* of cached manifests, not their total bytes. Each
+   * entry retains a whole decompressed manifest shard — hundreds of MB for
+   * fine-level virtual stores — so a single oversized shard, or a few held at
+   * once, can still dominate memory. Lower this when reading stores with very
+   * large manifests.
+   */
   maxManifestCacheSize?: number;
 
   /**

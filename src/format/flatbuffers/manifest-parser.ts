@@ -148,13 +148,14 @@ export function parseManifest(data: Uint8Array): Manifest {
   // Build the location decoder once per manifest from its zstd dictionary.
   const decodeLocation = makeLocationDecoder(fbsManifest);
 
-  // Parse arrays
+  // One entry per array node; refs stay in the buffer and resolve lazily so a
+  // single chunk read doesn't build a JS object per ref.
   const arraysLength = fbsManifest.arraysLength();
   const arrays: ArrayManifest[] = [];
   for (let i = 0; i < arraysLength; i++) {
     const fbsArray = fbsManifest.arrays(i);
     if (fbsArray) {
-      arrays.push(parseArrayManifest(fbsArray, decodeLocation));
+      arrays.push(makeArrayManifest(fbsArray, decodeLocation));
     }
   }
 
@@ -208,7 +209,8 @@ function makeLocationDecoder(fbsManifest: FbsManifest): LocationDecoder {
   };
 }
 
-function parseArrayManifest(
+/** Lazy {@link ArrayManifest} over one array's refs in the FlatBuffer. */
+function makeArrayManifest(
   fbsArray: FbsArrayManifest,
   decodeLocation: LocationDecoder,
 ): ArrayManifest {
@@ -220,17 +222,28 @@ function parseArrayManifest(
     nodeIdObj.bb!.bytes().slice(nodeIdObj.bb_pos, nodeIdObj.bb_pos + 8),
   );
 
-  // Parse refs
-  const refsLength = fbsArray.refsLength();
-  const refs: ChunkRef[] = [];
-  for (let i = 0; i < refsLength; i++) {
-    const fbsRef = fbsArray.refs(i);
-    if (fbsRef) {
-      refs.push(parseChunkRef(fbsRef, decodeLocation));
-    }
-  }
+  const numRefs = fbsArray.refsLength();
+  // Reused across `refIndex` probes: `refs(i, obj)` re-inits `obj` in place, so
+  // binary search allocates no per-probe ChunkRef.
+  const probe = new FbsChunkRef();
 
-  return { nodeId, refs };
+  return {
+    nodeId,
+    numRefs,
+    refIndex(i: number): number[] {
+      const fbsRef = fbsArray.refs(i, probe);
+      if (!fbsRef) throw new Error(`Manifest ref ${i} out of range`);
+      const indexLength = fbsRef.indexLength();
+      const index = new Array<number>(indexLength);
+      for (let d = 0; d < indexLength; d++) index[d] = fbsRef.index(d)!;
+      return index;
+    },
+    refAt(i: number): ChunkRef {
+      const fbsRef = fbsArray.refs(i);
+      if (!fbsRef) throw new Error(`Manifest ref ${i} out of range`);
+      return parseChunkRef(fbsRef, decodeLocation);
+    },
+  };
 }
 
 function parseChunkRef(
@@ -321,7 +334,7 @@ export function findChunkRef(
   if (!arrayManifest) return null;
 
   // Binary search for the chunk ref (refs are sorted by index)
-  return binarySearchChunkRef(arrayManifest.refs, coords);
+  return binarySearchChunkRef(arrayManifest, coords);
 }
 
 /** Binary search for an array manifest by node ID */
@@ -366,20 +379,20 @@ function compareCoords(a: number[], b: number[]): number {
   return a.length - b.length;
 }
 
-/** Binary search for a chunk ref by coordinates */
+/** Binary search for a chunk ref by coordinates, materializing only the match. */
 function binarySearchChunkRef(
-  refs: ChunkRef[],
+  array: ArrayManifest,
   coords: number[],
 ): ChunkRef | null {
   let low = 0;
-  let high = refs.length - 1;
+  let high = array.numRefs - 1;
 
   while (low <= high) {
     const mid = Math.floor((low + high) / 2);
-    const cmp = compareCoords(refs[mid].index, coords);
+    const cmp = compareCoords(array.refIndex(mid), coords);
 
     if (cmp === 0) {
-      return refs[mid];
+      return array.refAt(mid);
     } else if (cmp < 0) {
       low = mid + 1;
     } else {
