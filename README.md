@@ -137,13 +137,18 @@ Cloud storage URLs in virtual chunk references are automatically translated:
 - `abfs://container@account.dfs.core.windows.net/path` →
   `https://account.blob.core.windows.net/container/path`
 
-S3 buckets whose name contains a dot use path-style addressing on the global
-endpoint, which 301-redirects buckets outside `us-east-1` to their regional
-endpoint. In Node and other non-browser runtimes this redirect is resolved
-automatically. Browsers can't read the cross-origin redirect — S3 returns no
-CORS headers on it — so for such buckets supply a [`fetchClient`](#virtual-chunk-authentication)
-that routes to the regional endpoint (`https://s3.<region>.amazonaws.com/<bucket>/<key>`)
-or a CORS-enabled proxy.
+For S3, addressing follows the repo's virtual-chunk-container config (region,
+endpoint, path-style), mirroring the Rust implementation. Buckets whose name
+contains a dot must use path-style addressing; when the container config records
+a region (repos written by Icechunk do), reads go straight to that regional
+endpoint — which serves CORS and works in both Node and the browser, with no
+extra configuration.
+
+If no region is known, dotted-name buckets fall back to the global endpoint,
+whose region redirect (for buckets outside `us-east-1`) is resolved
+automatically in Node but not in browsers — the cross-origin redirect carries no
+CORS headers. Supply a [`fetchClient`](#virtual-chunk-authentication) that routes
+to the regional endpoint or a CORS-enabled proxy in that case.
 
 ### Repository
 

@@ -97,25 +97,47 @@ describe("repo-parser", () => {
   });
 
   describe("virtualChunkContainers", () => {
-    it("is empty when the only container has no name", () => {
-      // test-repo-v2 is created via `ic.VirtualChunkContainer("s3://testbucket/", store)`
-      // with no `name=` argument, so its single container is unnamed (name: null)
-      // and MUST be excluded from the vcc:// resolution map.
+    it("includes the unnamed container with its parsed S3 store config", () => {
+      // test-repo-v2's single container is unnamed (name: null) but carries an
+      // S3 store config (region/endpoint/addressing) we use to build requests.
       const repoData = readFileSync(join(TEST_REPO_V2_PATH, "repo"));
       const repo = parseRepo(repoData);
-      expect(repo.virtualChunkContainers.size).toBe(0);
+      expect(repo.virtualChunkContainers).toHaveLength(1);
+      const c = repo.virtualChunkContainers[0];
+      expect(c.name).toBeNull();
+      expect(c.urlPrefix).toBe("s3://testbucket/");
+      expect(c.s3).toEqual({
+        region: "us-east-1",
+        endpointUrl: "http://localhost:4200",
+        forcePathStyle: true,
+      });
     });
 
-    it("includes every named container from a migrated v2 repo", () => {
+    it("includes every container from a migrated v2 repo with parsed S3 config", () => {
       // test-repo-v2-migrated was produced by upgrading a v1 repo, which seeds
       // the config with the built-in named containers for each scheme.
       const repoData = readFileSync(join(TEST_REPO_V2_MIGRATED_PATH, "repo"));
       const repo = parseRepo(repoData);
-      expect(repo.virtualChunkContainers.get("s3")).toBe("s3://testbucket");
-      expect(repo.virtualChunkContainers.get("gcs")).toBe("gcs");
-      expect(repo.virtualChunkContainers.get("az")).toBe("az");
-      expect(repo.virtualChunkContainers.get("tigris")).toBe("tigris");
-      expect(repo.virtualChunkContainers.get("file")).toBe("file");
+      const byName = new Map(
+        repo.virtualChunkContainers.map((c) => [c.name, c]),
+      );
+
+      expect(byName.get("s3")?.urlPrefix).toBe("s3://testbucket");
+      expect(byName.get("s3")?.s3).toEqual({
+        region: "us-east-1",
+        endpointUrl: "http://localhost:4200",
+        forcePathStyle: true,
+      });
+      // Tigris uses S3Options too: endpoint + addressing, region unset (null).
+      expect(byName.get("tigris")?.s3).toEqual({
+        endpointUrl: "https://fly.storage.tigris.dev",
+        forcePathStyle: false,
+      });
+      // Non-S3 stores carry no S3 config.
+      expect(byName.get("gcs")?.urlPrefix).toBe("gcs");
+      expect(byName.get("gcs")?.s3).toBeUndefined();
+      expect(byName.get("az")?.s3).toBeUndefined();
+      expect(byName.get("file")?.s3).toBeUndefined();
     });
   });
 
