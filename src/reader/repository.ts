@@ -19,6 +19,7 @@ import {
   resolveTag,
   listBranchesFromRepo,
   listTagsFromRepo,
+  resolveSnapshotParent,
   type ParsedRepo,
 } from "../format/flatbuffers/repo-parser.js";
 import { ReadSession } from "./session.js";
@@ -472,20 +473,57 @@ export class Repository {
     metadata: Record<string, unknown>;
   }> {
     let current: ReadSession | null = session;
+    const seen = new Set<string>();
 
     while (current) {
+      const id = encodeObjectId12(current.getSnapshotId());
+      if (seen.has(id)) {
+        throw new Error(`Cycle in snapshot history at ${id}`);
+      }
+      seen.add(id);
+
       yield {
-        id: encodeObjectId12(current.getSnapshotId()),
+        id,
         message: current.getMessage(),
         flushedAt: current.getFlushedAt(),
         metadata: current.getSnapshotMetadata(),
       };
 
-      const parentId = current.getParentSnapshotId();
+      const parentId =
+        current.getParentSnapshotId() ??
+        (await this.resolveParentFromRepoInfo(current, options));
       if (!parentId) break;
 
       current = await this.checkoutSnapshot(parentId, options);
     }
+  }
+
+  /**
+   * v2 snapshots record ancestry only in the repo file. A snapshot missing
+   * from the cached copy may postdate it, so reload once before giving up.
+   */
+  private async resolveParentFromRepoInfo(
+    session: ReadSession,
+    options?: RequestOptions,
+  ): Promise<Uint8Array | null> {
+    const snapshotId = session.getSnapshotId();
+    const cached = await this.loadRepoInfo(options);
+    if (!cached) return null;
+
+    const parent = resolveSnapshotParent(cached, snapshotId);
+    if (parent !== undefined) return parent;
+
+    this.repoInfoAttempted = false;
+    const reloaded = await this.loadRepoInfo(options);
+    const reloadedParent = reloaded
+      ? resolveSnapshotParent(reloaded, snapshotId)
+      : undefined;
+    if (reloadedParent === undefined) {
+      throw new Error(
+        `Snapshot ${encodeObjectId12(snapshotId)} not found in repo info`,
+      );
+    }
+    return reloadedParent;
   }
 
   /**

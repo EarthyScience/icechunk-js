@@ -3,6 +3,12 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Repository } from "../../src/reader/repository.js";
+import type { ReadSession } from "../../src/reader/session.js";
+import {
+  parseRepo,
+  type ParsedRepo,
+} from "../../src/format/flatbuffers/repo-parser.js";
+import { withParentOffset } from "../helpers.js";
 import {
   MockStorage,
   MockStorageNoList,
@@ -590,6 +596,84 @@ describe("Repository", () => {
       expect(entries).toHaveLength(1);
       expect(entries[0].id).toBe("P874YS3J196959RDHX7G");
       expect(entries[0].message).toBe("Repository initialized");
+    });
+  });
+
+  describe("walkHistory (v2)", () => {
+    // v2 snapshot files carry no parent; ancestry comes from the repo file.
+    const V2_MAIN_HISTORY = [
+      { id: "2768FV3XW5ZXYM84XNNG", message: "set virtual chunk" },
+      { id: "ZA24GZGPNK3GH682Q1R0", message: "fill data" },
+      { id: "7T7DSS71H2JNBBZQ9M8G", message: "empty structure" },
+      { id: "1CECHNKREP0F1RSTCMT0", message: "Repository initialized" },
+    ];
+
+    async function collect(repo: Repository, session: ReadSession) {
+      const entries = [];
+      for await (const entry of repo.walkHistory(session)) {
+        entries.push({ id: entry.id, message: entry.message });
+      }
+      return entries;
+    }
+
+    async function collectBranch(branch: string) {
+      const storage = loadRepoIntoMockStorage(TEST_REPO_V2_PATH);
+      const repo = await Repository.open({ storage });
+      return collect(repo, await repo.checkoutBranch(branch));
+    }
+
+    /** The oldest overwritten repo file, which predates the main head. */
+    function oldestRepoInfo(): Uint8Array {
+      const dir = join(TEST_REPO_V2_PATH, "overwritten");
+      return readFileSync(join(dir, readdirSync(dir).sort().at(-1)!));
+    }
+
+    it("should walk linear history from branch head to root", async () => {
+      expect(await collectBranch("main")).toEqual(V2_MAIN_HISTORY);
+    });
+
+    it("should walk history including diverged commits on feature branch", async () => {
+      expect(await collectBranch("my-branch")).toEqual([
+        { id: "H7T8YA6KR5TH32F3PS10", message: "some more structure" },
+        { id: "QTP2RTYS5YQW8RPSQ93G", message: "delete a chunk" },
+        ...V2_MAIN_HISTORY,
+      ]);
+    });
+
+    it("should reload repo info for snapshots newer than the cached copy", async () => {
+      const storage = loadRepoIntoMockStorage(TEST_REPO_V2_PATH);
+      const latest = await storage.getObject(REPO_INFO_PATH);
+      storage.addFile(REPO_INFO_PATH, oldestRepoInfo());
+      const repo = await Repository.open({ storage });
+      storage.addFile(REPO_INFO_PATH, latest);
+
+      const session = await repo.checkoutSnapshot(V2_MAIN_HISTORY[0].id);
+      expect(await collect(repo, session)).toEqual(V2_MAIN_HISTORY);
+    });
+
+    it("should throw for a snapshot absent from the repo info", async () => {
+      const storage = loadRepoIntoMockStorage(TEST_REPO_V2_PATH);
+      storage.addFile(REPO_INFO_PATH, oldestRepoInfo());
+      const repo = await Repository.open({ storage });
+
+      const session = await repo.checkoutSnapshot(V2_MAIN_HISTORY[0].id);
+      await expect(collect(repo, session)).rejects.toThrow(
+        `Snapshot ${V2_MAIN_HISTORY[0].id} not found in repo info`,
+      );
+    });
+
+    it("should throw on cyclic ancestry", async () => {
+      const storage = loadRepoIntoMockStorage(TEST_REPO_V2_PATH);
+      const parsed = parseRepo(await storage.getObject(REPO_INFO_PATH));
+      // Point "fill data" (index 5) back at the main head (index 1).
+      const corrupt = withParentOffset(parsed, 5, 1);
+      const repo = await Repository.open({ storage });
+      (repo as unknown as { repoInfo: ParsedRepo }).repoInfo = corrupt;
+
+      const session = await repo.checkoutBranch("main");
+      await expect(collect(repo, session)).rejects.toThrow(
+        "Cycle in snapshot history",
+      );
     });
   });
 

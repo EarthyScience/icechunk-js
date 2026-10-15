@@ -343,3 +343,49 @@ export function listTagsFromRepo(parsedRepo: ParsedRepo): string[] {
   const { repo } = parsedRepo;
   return listRefs((i) => repo.tags(i), repo.tagsLength());
 }
+
+const snapshotIndexCache = new WeakMap<ParsedRepo, Map<string, number>>();
+
+function snapshotIndexById(parsedRepo: ParsedRepo): Map<string, number> {
+  let index = snapshotIndexCache.get(parsedRepo);
+  if (!index) {
+    index = new Map();
+    for (let i = 0; i < parsedRepo.snapshotsLength; i++) {
+      index.set(bytesKey(getSnapshotIdByIndex(parsedRepo, i)), i);
+    }
+    snapshotIndexCache.set(parsedRepo, index);
+  }
+  return index;
+}
+
+function bytesKey(bytes: Uint8Array): string {
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * Resolve a snapshot's parent ID from the repo file's snapshots list.
+ *
+ * v2 snapshot files carry no parent pointer; ancestry lives only in the
+ * repo file as `parent_offset` indices.
+ *
+ * @returns Parent snapshot ID bytes, null for a root snapshot, or undefined
+ *   if the snapshot is absent from the repo file
+ * @throws Error on corrupted data (invalid parent offset)
+ */
+export function resolveSnapshotParent(
+  parsedRepo: ParsedRepo,
+  snapshotId: Uint8Array,
+): Uint8Array | null | undefined {
+  const index = snapshotIndexById(parsedRepo).get(bytesKey(snapshotId));
+  if (index === undefined) return undefined;
+
+  const parentOffset = parsedRepo.repo.snapshots(index)!.parentOffset();
+  if (parentOffset === -1) return null;
+  if (parentOffset < 0 || parentOffset >= parsedRepo.snapshotsLength) {
+    throw new Error(
+      `Invalid parent offset ${parentOffset} for snapshot at index ${index}, ` +
+        `snapshots array has ${parsedRepo.snapshotsLength} entries`,
+    );
+  }
+  return getSnapshotIdByIndex(parsedRepo, parentOffset);
+}

@@ -8,8 +8,13 @@ import {
   listTagsFromRepo,
   resolveBranch,
   resolveTag,
+  resolveSnapshotParent,
 } from "../../../src/format/flatbuffers/repo-parser.js";
-import { encodeObjectId12 } from "../../../src/format/object-id.js";
+import {
+  decodeObjectId12,
+  encodeObjectId12,
+} from "../../../src/format/object-id.js";
+import { withParentOffset } from "../../helpers.js";
 
 // ESM equivalent of __dirname
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -93,6 +98,40 @@ describe("repo-parser", () => {
       const snapshotId = resolveTag(repo, "nonexistent-tag");
 
       expect(snapshotId).toBeNull();
+    });
+  });
+
+  describe("resolveSnapshotParent", () => {
+    const repo = () => parseRepo(readFileSync(join(TEST_REPO_V2_PATH, "repo")));
+    const MAIN_HEAD = decodeObjectId12("2768FV3XW5ZXYM84XNNG");
+
+    it("should resolve a snapshot's parent", () => {
+      const parent = resolveSnapshotParent(repo(), MAIN_HEAD);
+      expect(encodeObjectId12(parent!)).toBe("ZA24GZGPNK3GH682Q1R0");
+    });
+
+    it("should return null for the root snapshot", () => {
+      const root = decodeObjectId12("1CECHNKREP0F1RSTCMT0");
+      expect(resolveSnapshotParent(repo(), root)).toBeNull();
+    });
+
+    it("should return undefined for a snapshot absent from the repo file", () => {
+      const unknown = new Uint8Array(12).fill(7);
+      expect(resolveSnapshotParent(repo(), unknown)).toBeUndefined();
+    });
+
+    it("should throw on an out-of-range parent offset", () => {
+      const corrupt = withParentOffset(repo(), 1, 99);
+      expect(() => resolveSnapshotParent(corrupt, MAIN_HEAD)).toThrow(
+        "Invalid parent offset 99",
+      );
+    });
+
+    it("should throw on a negative parent offset other than -1", () => {
+      const corrupt = withParentOffset(repo(), 1, -2);
+      expect(() => resolveSnapshotParent(corrupt, MAIN_HEAD)).toThrow(
+        "Invalid parent offset -2",
+      );
     });
   });
 
