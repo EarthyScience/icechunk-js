@@ -640,17 +640,6 @@ describe("Repository", () => {
       ]);
     });
 
-    it("should reload repo info for snapshots newer than the cached copy", async () => {
-      const storage = loadRepoIntoMockStorage(TEST_REPO_V2_PATH);
-      const latest = await storage.getObject(REPO_INFO_PATH);
-      storage.addFile(REPO_INFO_PATH, oldestRepoInfo());
-      const repo = await Repository.open({ storage });
-      storage.addFile(REPO_INFO_PATH, latest);
-
-      const session = await repo.checkoutSnapshot(V2_MAIN_HISTORY[0].id);
-      expect(await collect(repo, session)).toEqual(V2_MAIN_HISTORY);
-    });
-
     it("should throw for a snapshot absent from the repo info", async () => {
       const storage = loadRepoIntoMockStorage(TEST_REPO_V2_PATH);
       storage.addFile(REPO_INFO_PATH, oldestRepoInfo());

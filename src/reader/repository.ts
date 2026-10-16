@@ -498,32 +498,22 @@ export class Repository {
     }
   }
 
-  /**
-   * v2 snapshots record ancestry only in the repo file. A snapshot missing
-   * from the cached copy may postdate it, so reload once before giving up.
-   */
+  /** v2 snapshots record ancestry only in the repo file. */
   private async resolveParentFromRepoInfo(
     session: ReadSession,
     options?: RequestOptions,
   ): Promise<Uint8Array | null> {
+    const repoInfo = await this.loadRepoInfo(options);
+    if (!repoInfo) return null;
+
     const snapshotId = session.getSnapshotId();
-    const cached = await this.loadRepoInfo(options);
-    if (!cached) return null;
-
-    const parent = resolveSnapshotParent(cached, snapshotId);
-    if (parent !== undefined) return parent;
-
-    this.repoInfoAttempted = false;
-    const reloaded = await this.loadRepoInfo(options);
-    const reloadedParent = reloaded
-      ? resolveSnapshotParent(reloaded, snapshotId)
-      : undefined;
-    if (reloadedParent === undefined) {
+    const parent = resolveSnapshotParent(repoInfo, snapshotId);
+    if (parent === undefined) {
       throw new Error(
         `Snapshot ${encodeObjectId12(snapshotId)} not found in repo info`,
       );
     }
-    return reloadedParent;
+    return parent;
   }
 
   /**
