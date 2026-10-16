@@ -19,6 +19,7 @@ import {
   resolveTag,
   listBranchesFromRepo,
   listTagsFromRepo,
+  resolveSnapshotParent,
   type ParsedRepo,
 } from "../format/flatbuffers/repo-parser.js";
 import { ReadSession } from "./session.js";
@@ -472,20 +473,47 @@ export class Repository {
     metadata: Record<string, unknown>;
   }> {
     let current: ReadSession | null = session;
+    const seen = new Set<string>();
 
     while (current) {
+      const id = encodeObjectId12(current.getSnapshotId());
+      if (seen.has(id)) {
+        throw new Error(`Cycle in snapshot history at ${id}`);
+      }
+      seen.add(id);
+
       yield {
-        id: encodeObjectId12(current.getSnapshotId()),
+        id,
         message: current.getMessage(),
         flushedAt: current.getFlushedAt(),
         metadata: current.getSnapshotMetadata(),
       };
 
-      const parentId = current.getParentSnapshotId();
+      const parentId =
+        current.getParentSnapshotId() ??
+        (await this.resolveParentFromRepoInfo(current, options));
       if (!parentId) break;
 
       current = await this.checkoutSnapshot(parentId, options);
     }
+  }
+
+  /** v2 snapshots record ancestry only in the repo file. */
+  private async resolveParentFromRepoInfo(
+    session: ReadSession,
+    options?: RequestOptions,
+  ): Promise<Uint8Array | null> {
+    const repoInfo = await this.loadRepoInfo(options);
+    if (!repoInfo) return null;
+
+    const snapshotId = session.getSnapshotId();
+    const parent = resolveSnapshotParent(repoInfo, snapshotId);
+    if (parent === undefined) {
+      throw new Error(
+        `Snapshot ${encodeObjectId12(snapshotId)} not found in repo info`,
+      );
+    }
+    return parent;
   }
 
   /**
