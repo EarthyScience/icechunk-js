@@ -11,7 +11,13 @@ import { HttpStorage } from "./storage/http-storage.js";
 import type { Storage, FetchClient } from "./storage/storage.js";
 import { NotFoundError } from "./storage/storage.js";
 import type { NodeSnapshot } from "./format/flatbuffers/types.js";
-import type { RangeCoalescingFn } from "./reader/range-coalescer.js";
+import {
+  createRangeCoalescer,
+  isRangeCoalescer,
+  type RangeCoalescer,
+  type RangeCoalesceOptions,
+  type RangeCoalescingFn,
+} from "./reader/range-coalescer.js";
 
 /**
  * zarrita's AbsolutePath type - paths must start with "/"
@@ -76,10 +82,19 @@ export interface IcechunkStoreOptions {
   maxManifestCacheSize?: number;
 
   /**
-   * Zarrita-backed range coalescing function for chunk payload reads.
+   * Range coalescing for chunk reads. On by default: concurrent reads of
+   * nearby byte ranges in the same backing object (a virtual-chunk file or a
+   * native chunk object) are merged into one Range request and sliced apart
+   * on return. Pass options to tune the gap, request size and batching
+   * window, or `false` to issue one request per chunk.
    *
-   * Pass `zarrita.withRangeCoalescing` to opt in. Concurrent range reads
-   * against the same backing object may be merged into one larger request.
+   * Ignored when `withRangeCoalescing` is set.
+   */
+  coalesce?: RangeCoalesceOptions | false;
+
+  /**
+   * Custom range-coalescing wrapper for chunk payload reads, replacing the
+   * built-in one — for example `zarrita.withRangeCoalescing` (zarrita >= 0.7).
    */
   withRangeCoalescing?: RangeCoalescingFn;
 
@@ -167,6 +182,7 @@ export class IcechunkStore implements AsyncReadable {
       | "fetchClient"
       | "validateChecksums"
       | "azureAccount"
+      | "coalesce"
       | "withRangeCoalescing"
     >,
   ): Promise<IcechunkStore>;
@@ -186,13 +202,14 @@ export class IcechunkStore implements AsyncReadable {
     arg: string | ReadSession | Storage,
     options: IcechunkStoreOptions = {},
   ): Promise<IcechunkStore> {
+    const withRangeCoalescing = resolveRangeCoalescing(options);
     if (arg instanceof ReadSession) {
       return new IcechunkStore(
         arg,
         options.fetchClient,
         options.validateChecksums,
         options.azureAccount,
-        options.withRangeCoalescing,
+        withRangeCoalescing,
       );
     }
 
@@ -228,8 +245,19 @@ export class IcechunkStore implements AsyncReadable {
       options.fetchClient,
       options.validateChecksums,
       options.azureAccount,
-      options.withRangeCoalescing,
+      withRangeCoalescing,
     );
+  }
+
+  /**
+   * The built-in range coalescer this store reads chunks through, with its
+   * counters (`stats`: requests issued, bytes fetched and discarded, ...).
+   * `undefined` when coalescing is off or a custom wrapper was supplied.
+   */
+  get rangeCoalescer(): RangeCoalescer | undefined {
+    return isRangeCoalescer(this.withRangeCoalescing)
+      ? this.withRangeCoalescing
+      : undefined;
   }
 
   /**
@@ -443,6 +471,15 @@ export class IcechunkStore implements AsyncReadable {
       ).replace(/\/+$/, "") || "/";
     return this.session.getMetadata(fullPath);
   }
+}
+
+/** Pick the chunk-read coalescer for the options given to `open`. */
+function resolveRangeCoalescing(
+  options: Pick<IcechunkStoreOptions, "coalesce" | "withRangeCoalescing">,
+): RangeCoalescingFn | undefined {
+  if (options.withRangeCoalescing) return options.withRangeCoalescing;
+  if (options.coalesce === false) return undefined;
+  return createRangeCoalescer(options.coalesce);
 }
 
 /** Parsed zarr key */

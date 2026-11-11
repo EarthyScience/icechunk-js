@@ -53,18 +53,24 @@ if not already available. The version is set in `scripts/ensure-flatc.sh`.
 ### IcechunkStore
 
 The main class for zarrita integration. Implements zarrita's `AsyncReadable`
-interface with both `get()` and `getRange()` (needed for sharded arrays). Pass
-zarrita's `withRangeCoalescing` to coalesce concurrent reads against the same
-backing object. This requires zarrita >= 0.7.
+interface with both `get()` and `getRange()` (needed for sharded arrays).
 
-> **Note:** Range coalescing uses zarrita's merged abort-signal behavior. If one
-> read in a merged batch is aborted, other reads in the same batch may also
-> reject. Avoid sharing an `AbortController` across requests that must cancel
-> independently.
+Concurrent chunk reads are range-coalesced by default: reads issued in the same
+turn (for example every chunk of one `zarr.get`) that target the same backing
+object — one virtual-chunk file, or one native chunk object — are sorted,
+deduplicated and merged into one Range request per contiguous run, then sliced
+apart so each read gets exactly its bytes. Neighbours up to `maxGap` apart
+(default 1 MiB; the gap bytes are fetched and discarded) merge into requests of
+at most `maxBytes` (default 16 MiB). A failed merged request is retried one
+chunk at a time, and aborting one read never cancels the others. Tune it with
+`coalesce: { maxGap, maxBytes, window }`, turn it off with `coalesce: false`,
+or read `store.rangeCoalescer.stats` to see requests issued and bytes
+fetched/discarded. zarrita's own `withRangeCoalescing` (zarrita >= 0.7) can be
+passed instead to replace the built-in wrapper.
 
 ```typescript
 import { IcechunkStore } from "icechunk-js";
-import { withRangeCoalescing } from "zarrita";
+import { withRangeCoalescing } from "zarrita"; // optional
 
 // Open from a URL (default: branch "main")
 const store = await IcechunkStore.open("https://example.com/repo", {
@@ -73,7 +79,8 @@ const store = await IcechunkStore.open("https://example.com/repo", {
   // snapshot: 'ABC123...',
   // formatVersion: 'v1',     // skip format auto-detection for v1 repos
   // maxManifestCacheSize: 50, // LRU cache size (default: 100)
-  // withRangeCoalescing, // opt into merged range reads
+  // coalesce: { maxGap: 1 << 20, maxBytes: 16 << 20, window: 0 }, // or false
+  // withRangeCoalescing, // zarrita's wrapper instead of the built-in one
   // signal: abortController.signal, // cancel initialization
   // validateChecksums: true,  // integrity headers for virtual chunks
   // azureAccount: 'myaccount', // required for az:// virtual chunks
