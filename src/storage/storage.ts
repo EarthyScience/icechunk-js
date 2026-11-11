@@ -76,10 +76,39 @@ export class StorageError extends Error {
   constructor(
     message: string,
     public readonly cause?: Error,
+    /** HTTP status that produced this error, when there was one. */
+    public readonly status?: number,
   ) {
     super(message);
     this.name = "StorageError";
   }
+}
+
+/** The byte span a `Content-Range: bytes <start>-<end>/<size>` header declares. */
+export interface ContentRange {
+  /** First byte of the body, inclusive. */
+  start: number;
+  /** Last byte of the body, inclusive. */
+  end: number;
+  /** Object size, or null when the server sent `*`. */
+  size: number | null;
+}
+
+/**
+ * Parse a response's `Content-Range` header. Returns null when the header is
+ * absent or is not a byte span (an unsatisfied `bytes *\/size` has none).
+ * Tolerates mock responses without a `headers` object.
+ */
+export function parseContentRange(response: Response): ContentRange | null {
+  const value = response.headers?.get?.("content-range");
+  if (!value) return null;
+  const match = /^bytes\s+(\d+)-(\d+)\/(\d+|\*)$/i.exec(value.trim());
+  if (!match) return null;
+  return {
+    start: Number(match[1]),
+    end: Number(match[2]),
+    size: match[3] === "*" ? null : Number(match[3]),
+  };
 }
 
 type ErrorWithName = { name: unknown };

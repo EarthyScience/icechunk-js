@@ -29,6 +29,7 @@
  */
 
 import type { FetchClient, Storage } from "../storage/storage.js";
+import { NotFoundError, parseContentRange } from "../storage/storage.js";
 
 // Minimal structural mirror of zarrita's `AsyncReadable`. Kept local so
 // this module has no required import from zarrita — the peer dep is
@@ -71,6 +72,48 @@ export interface MakeUrlStoreOptions {
 
 function expectedRangeLength(range: RangeQuery): number {
   return "suffixLength" in range ? range.suffixLength : range.length;
+}
+
+function describeRange(range: RangeQuery): string {
+  return "suffixLength" in range
+    ? `last ${range.suffixLength} bytes`
+    : `bytes ${range.offset}-${range.offset + range.length - 1}`;
+}
+
+/** An HTTP failure carrying its status, so callers can tell whole-object failures apart. */
+function httpError(message: string, status: number): Error {
+  return Object.assign(new Error(message), { status });
+}
+
+/**
+ * Reject a 206 whose `Content-Range` is not the span that was requested.
+ * Coalescers slice the body by offset, so one misplaced body would shift
+ * every chunk cut from it. Absent or unparsable headers are let through;
+ * the body-length check still applies.
+ */
+function assertContentRangeMatches(
+  url: string,
+  range: RangeQuery,
+  response: Response,
+): void {
+  const got = parseContentRange(response);
+  if (!got) return;
+  const matches =
+    "suffixLength" in range
+      ? got.end - got.start + 1 === range.suffixLength &&
+        (got.size === null || got.end === got.size - 1)
+      : got.start === range.offset &&
+        got.end === range.offset + range.length - 1;
+  if (!matches) {
+    throw new Error(
+      `Range response for ${url} covers bytes ${got.start}-${got.end}, not the requested ${describeRange(range)}`,
+    );
+  }
+}
+
+/** Copy `[start, end)` out of `data` into a buffer of its own. `slice` would hand back a view on a Node `Buffer`. */
+function copyBytes(data: Uint8Array, start: number, end: number): Uint8Array {
+  return new Uint8Array(data.subarray(start, end));
 }
 
 /**
@@ -146,13 +189,15 @@ export function makeUrlStore(opts: MakeUrlStoreOptions): AsyncReadable {
       }
 
       if (response.status === 412) {
-        throw new Error(
+        throw httpError(
           `Virtual chunk at ${requestUrl} failed integrity check — data has been modified since snapshot was created`,
+          412,
         );
       }
       if (response.status !== 200 && response.status !== 206) {
-        throw new Error(
+        throw httpError(
           `Failed to fetch virtual chunk from ${requestUrl}: ${response.status} ${response.statusText}`,
+          response.status,
         );
       }
 
@@ -162,6 +207,7 @@ export function makeUrlStore(opts: MakeUrlStoreOptions): AsyncReadable {
       // is exactly the requested range. Coalescers slice from this buffer by
       // offset, so accepting an overlong partial response can shift data.
       if (response.status === 206) {
+        assertContentRangeMatches(requestUrl, range, response);
         const expected = expectedRangeLength(range);
         if (data.length === expected) return data;
         throw new Error(
@@ -222,10 +268,14 @@ export function makeStorageStore(storage: Storage): AsyncReadable {
       const data = await storage.getObject(key, storageRange, storageOptions);
       if (data.length === range.length) return data;
 
-      // Range header may be ignored (e.g. HTTP 200 full body). If the full
-      // object is available, slice out the requested window explicitly.
+      // A `Storage` that ignores ranges returns the whole object (an HTTP
+      // 200); copy out the requested window. `HttpStorage` already slices
+      // 200s and rejects a 206 whose Content-Range is off, so a longer body
+      // from a custom `Storage` is taken to be the whole object — a partial
+      // body of the wrong span is indistinguishable here and is that
+      // storage's bug to catch.
       if (data.length >= storageRange.end) {
-        return data.slice(storageRange.start, storageRange.end);
+        return copyBytes(data, storageRange.start, storageRange.end);
       }
 
       throw new Error(
@@ -239,17 +289,26 @@ export function makeStorageStore(storage: Storage): AsyncReadable {
 // Built-in coalescer
 // ---------------------------------------------------------------------------
 
-/** Default largest gap bridged between two reads: 1 MiB. */
-const DEFAULT_MAX_GAP = 1 << 20;
+/** Default largest gap bridged between two reads: 256 KiB. */
+const DEFAULT_MAX_GAP = 256 * 1024;
 /** Default largest merged request: 16 MiB. */
 const DEFAULT_MAX_BYTES = 16 << 20;
+/** Default bound on gap bytes relative to delivered bytes per request. */
+const DEFAULT_MAX_WASTE_RATIO = 1;
+/** Marks functions built by `createRangeCoalescer`. */
+const COALESCER_BRAND: unique symbol = Symbol("icechunk-js.rangeCoalescer");
+/**
+ * HTTP statuses that condemn the whole object, not just one merged request:
+ * retrying its members one by one could only repeat the same answer.
+ */
+const WHOLE_OBJECT_STATUSES = new Set([401, 403, 404, 412]);
 
 /** Options for the built-in range coalescer. */
 export interface RangeCoalesceOptions {
   /**
    * Largest byte gap between two reads that is bridged by one request
-   * (default 1 MiB). Gap bytes are fetched and discarded, so this trades
-   * bandwidth for request count.
+   * (default 256 KiB). Gap bytes are fetched and discarded, so this trades
+   * bandwidth for request count; `maxWasteRatio` bounds the total.
    */
   maxGap?: number;
   /**
@@ -258,11 +317,19 @@ export interface RangeCoalesceOptions {
    */
   maxBytes?: number;
   /**
+   * Largest ratio of gap bytes to delivered bytes one merged request may
+   * reach (default 1): a gap is bridged only while the request's discarded
+   * bytes stay at or below the bytes its callers asked for. `Infinity`
+   * leaves `maxGap` as the only bound; `0` merges adjacent reads only.
+   */
+  maxWasteRatio?: number;
+  /**
    * Batching window in milliseconds. `0` (default) flushes on the next
-   * microtask, so reads issued in the same synchronous turn — e.g. all chunks
-   * of one `zarr.get` — batch together with no added latency. A positive
-   * value flushes on a timer instead and also catches reads that trickle in
-   * across turns, at the cost of that much delay per batch.
+   * microtask, so reads issued in the same microtask turn batch together
+   * with no added latency. A positive value flushes on a `setTimeout` timer
+   * instead and also catches reads that trickle in across turns, at the cost
+   * of that much delay per batch — and browsers throttle timers in
+   * background tabs.
    */
   window?: number;
 }
@@ -289,16 +356,23 @@ export interface RangeCoalescer extends RangeCoalescingFn {
   resetStats(): void;
 }
 
-/** True when `fn` is a built-in coalescer (carries `stats`). */
+/** True when `fn` was built by `createRangeCoalescer`. */
 export function isRangeCoalescer(
   fn: RangeCoalescingFn | undefined,
 ): fn is RangeCoalescer {
-  return typeof fn === "function" && "stats" in fn;
+  return (
+    typeof fn === "function" &&
+    (fn as { [COALESCER_BRAND]?: boolean })[COALESCER_BRAND] === true
+  );
 }
 
 interface Waiter {
   signal: AbortSignal | undefined;
   settled: boolean;
+  /** Removes the abort listener registered when the read was queued. */
+  detach?: () => void;
+  /** Set by `issue` while a merged request is in flight; runs after this waiter aborts. */
+  onAbort?: () => void;
   resolve(data: Uint8Array | undefined): void;
   reject(error: unknown): void;
 }
@@ -328,6 +402,7 @@ interface Run {
 interface ResolvedOptions {
   maxGap: number;
   maxBytes: number;
+  maxWasteRatio: number;
   window: number;
 }
 
@@ -348,8 +423,15 @@ function freshStats(): RangeCoalesceStats {
   };
 }
 
-function nonNegative(name: string, value: number): number {
-  if (!Number.isFinite(value) || value < 0) {
+function nonNegative(
+  name: string,
+  value: number,
+  allowInfinite = false,
+): number {
+  const valid = allowInfinite
+    ? !Number.isNaN(value) && value >= 0
+    : Number.isFinite(value) && value >= 0;
+  if (!valid) {
     throw new RangeError(`coalesce.${name} must be a non-negative number`);
   }
   return value;
@@ -360,6 +442,23 @@ function abortReason(signal: AbortSignal): unknown {
     signal.reason ??
     new DOMException("The operation was aborted.", "AbortError")
   );
+}
+
+/** Settle a waiter exactly once and drop its abort listener. */
+function settle(waiter: Waiter, outcome: () => void): void {
+  if (waiter.settled) return;
+  waiter.settled = true;
+  waiter.detach?.();
+  waiter.detach = undefined;
+  waiter.onAbort = undefined;
+  outcome();
+}
+
+/** True when `error` condemns the whole object (404, 403, 401, 412). */
+function failsWholeObject(error: unknown): boolean {
+  if (error instanceof NotFoundError) return true;
+  const status = (error as { status?: unknown } | null)?.status;
+  return typeof status === "number" && WHOLE_OBJECT_STATUSES.has(status);
 }
 
 /**
@@ -376,12 +475,18 @@ export function createRangeCoalescer(
   const resolved: ResolvedOptions = {
     maxGap: nonNegative("maxGap", options.maxGap ?? DEFAULT_MAX_GAP),
     maxBytes: nonNegative("maxBytes", options.maxBytes ?? DEFAULT_MAX_BYTES),
+    maxWasteRatio: nonNegative(
+      "maxWasteRatio",
+      options.maxWasteRatio ?? DEFAULT_MAX_WASTE_RATIO,
+      true,
+    ),
     window: nonNegative("window", options.window ?? 0),
   };
   const stats = freshStats();
   const wrap = (store: AsyncReadable): AsyncReadable =>
     wrapStore(store, resolved, stats);
   return Object.assign(wrap, {
+    [COALESCER_BRAND]: true as const,
     stats,
     resetStats() {
       Object.assign(stats, freshStats());
@@ -406,7 +511,10 @@ function wrapStore(
     const work = [...pending];
     pending.clear();
     for (const [key, reads] of work) {
-      for (const run of planRuns(reads, options)) {
+      // Reads aborted while queued are already rejected; keep them out of
+      // the plan so they neither widen a run nor count as waiters.
+      const live = reads.filter((read) => !read.waiter.settled);
+      for (const run of planRuns(live, options)) {
         const length = run.end - run.offset;
         stats.bytesDiscarded += length - run.delivered;
         void issue(inner, stats, key, run.offset, length, run.members);
@@ -433,16 +541,24 @@ function wrapStore(
       stats.ranges++;
       stats.bytesRequested += range.length;
       return new Promise<Uint8Array | undefined>((resolve, reject) => {
+        const waiter: Waiter = { signal, settled: false, resolve, reject };
+        if (signal) {
+          // Listen from the moment the read is queued: an abort during the
+          // window must reject it (an already-aborted signal never fires).
+          const onAbort = () => {
+            const hook = waiter.onAbort;
+            settle(waiter, () => waiter.reject(abortReason(signal)));
+            hook?.();
+          };
+          signal.addEventListener("abort", onAbort, { once: true });
+          waiter.detach = () => signal.removeEventListener("abort", onAbort);
+        }
         let reads = pending.get(key);
         if (!reads) {
           reads = [];
           pending.set(key, reads);
         }
-        reads.push({
-          offset: range.offset,
-          length: range.length,
-          waiter: { signal, settled: false, resolve, reject },
-        });
+        reads.push({ offset: range.offset, length: range.length, waiter });
         schedule();
       });
     },
@@ -452,8 +568,9 @@ function wrapStore(
 /**
  * Sort one key's reads by offset, fold identical ranges into one member, and
  * chain members into runs: a member joins the current run when it starts
- * within `maxGap` of the run's end (overlaps included) and the run stays
- * within `maxBytes`.
+ * within `maxGap` of the run's end (overlaps included), the run stays within
+ * `maxBytes`, and the run's gap bytes stay within `maxWasteRatio` times the
+ * bytes it delivers.
  */
 function planRuns(reads: PendingRead[], options: ResolvedOptions): Run[] {
   reads.sort((a, b) => a.offset - b.offset || a.length - b.length);
@@ -476,26 +593,29 @@ function planRuns(reads: PendingRead[], options: ResolvedOptions): Run[] {
   let run: Run | undefined;
   for (const member of members) {
     const memberEnd = member.offset + member.length;
-    if (
-      run &&
-      member.offset - run.end <= options.maxGap &&
-      Math.max(run.end, memberEnd) - run.offset <= options.maxBytes
-    ) {
-      run.delivered += Math.max(
-        0,
-        memberEnd - Math.max(member.offset, run.end),
-      );
-      run.end = Math.max(run.end, memberEnd);
-      run.members.push(member);
-    } else {
-      run = {
-        offset: member.offset,
-        end: memberEnd,
-        members: [member],
-        delivered: member.length,
-      };
-      runs.push(run);
+    if (run) {
+      const added = Math.max(0, memberEnd - Math.max(member.offset, run.end));
+      const end = Math.max(run.end, memberEnd);
+      const length = end - run.offset;
+      const delivered = run.delivered + added;
+      if (
+        member.offset - run.end <= options.maxGap &&
+        length <= options.maxBytes &&
+        length - delivered <= options.maxWasteRatio * delivered
+      ) {
+        run.end = end;
+        run.delivered = delivered;
+        run.members.push(member);
+        continue;
+      }
     }
+    run = {
+      offset: member.offset,
+      end: memberEnd,
+      members: [member],
+      delivered: member.length,
+    };
+    runs.push(run);
   }
   return runs;
 }
@@ -525,28 +645,24 @@ async function issue(
   if (waiters.length === 0) return;
 
   // Abort handling. One waiter: its own signal goes straight through. Several:
-  // each waiter's abort rejects that waiter alone, and the shared request is
-  // aborted only when no waiter is left listening.
+  // each waiter's abort rejects that waiter alone (the listener registered at
+  // queue time), and the shared request is aborted only when no waiter is
+  // left listening. Waiters without a signal keep it alive.
   let signal: AbortSignal | undefined;
   let controller: AbortController | undefined;
-  const cleanups: Array<() => void> = [];
   if (waiters.length === 1) {
     signal = waiters[0].signal;
   } else if (waiters.some((waiter) => waiter.signal)) {
-    controller = new AbortController();
-    signal = controller.signal;
+    const shared = new AbortController();
+    controller = shared;
+    signal = shared.signal;
     let live = waiters.length;
     for (const waiter of waiters) {
       const waiterSignal = waiter.signal;
       if (!waiterSignal) continue;
-      const onAbort = () => {
-        if (waiter.settled) return;
-        waiter.settled = true;
-        waiter.reject(abortReason(waiterSignal));
-        if (--live === 0) controller!.abort(waiterSignal.reason);
+      waiter.onAbort = () => {
+        if (--live === 0) shared.abort(waiterSignal.reason);
       };
-      waiterSignal.addEventListener("abort", onAbort, { once: true });
-      cleanups.push(() => waiterSignal.removeEventListener("abort", onAbort));
     }
   }
 
@@ -566,11 +682,15 @@ async function issue(
       );
     }
   } catch (error) {
-    for (const cleanup of cleanups) cleanup();
-    if (members.length > 1 && !controller?.signal.aborted) {
+    if (
+      members.length > 1 &&
+      !controller?.signal.aborted &&
+      !failsWholeObject(error)
+    ) {
       // One failed merged request must not fail every chunk in it: retry
       // each member on its own so only the genuinely bad range rejects.
       stats.fallbacks++;
+      for (const waiter of waiters) waiter.onAbort = undefined;
       await Promise.all(
         members.map((member) =>
           issue(inner, stats, key, member.offset, member.length, [member]),
@@ -578,36 +698,32 @@ async function issue(
       );
       return;
     }
-    for (const waiter of waiters) {
-      if (waiter.settled) continue;
-      waiter.settled = true;
-      waiter.reject(error);
-    }
+    for (const waiter of waiters) settle(waiter, () => waiter.reject(error));
     return;
   }
-  for (const cleanup of cleanups) cleanup();
 
   for (const member of members) {
     const start = member.offset - offset;
     let view: Uint8Array | undefined;
     for (const waiter of member.waiters) {
       if (waiter.settled) continue;
-      waiter.settled = true;
       if (!data) {
-        waiter.resolve(undefined);
+        settle(waiter, () => waiter.resolve(undefined));
         continue;
       }
       if (!view) {
-        // Pass a lone read's bytes through untouched; slice (copy) members
-        // out of a merged buffer so no caller retains the whole run.
+        // Pass a lone read's bytes through untouched; copy members out of a
+        // merged buffer so no caller retains (or shares) the whole run.
         view =
           members.length === 1
             ? data
-            : data.slice(start, start + member.length);
-        waiter.resolve(view);
+            : copyBytes(data, start, start + member.length);
+        const first = view;
+        settle(waiter, () => waiter.resolve(first));
       } else {
         // Duplicate ranges share one fetch but each caller gets its own copy.
-        waiter.resolve(view.slice());
+        const copy = new Uint8Array(view);
+        settle(waiter, () => waiter.resolve(copy));
       }
     }
   }

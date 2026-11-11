@@ -82,19 +82,26 @@ export interface IcechunkStoreOptions {
   maxManifestCacheSize?: number;
 
   /**
-   * Range coalescing for chunk reads. On by default: concurrent reads of
-   * nearby byte ranges in the same backing object (a virtual-chunk file or a
-   * native chunk object) are merged into one Range request and sliced apart
-   * on return. Pass options to tune the gap, request size and batching
-   * window, or `false` to issue one request per chunk.
+   * Range coalescing for chunk reads. On by default: reads issued in the
+   * same microtask turn for nearby byte ranges of one backing object (a
+   * virtual-chunk file or a native chunk object) are merged into one Range
+   * request and sliced apart on return. Pass options to tune the gap, request
+   * size, waste bound and batching window, or `false` to issue one request
+   * per chunk.
    *
-   * Ignored when `withRangeCoalescing` is set.
+   * Each `IcechunkStore.open` call builds its own coalescer, so stores opened
+   * separately from one `ReadSession` batch separately and each adds its own
+   * entries to the session's bounded cache of wrapped stores; derive
+   * sub-stores with `resolve()` to share one. Ignored when
+   * `withRangeCoalescing` is set.
    */
   coalesce?: RangeCoalesceOptions | false;
 
   /**
    * Custom range-coalescing wrapper for chunk payload reads, replacing the
    * built-in one — for example `zarrita.withRangeCoalescing` (zarrita >= 0.7).
+   * Note that zarrita's wrapper merges abort signals with `AbortSignal.any`:
+   * aborting one read in a merged batch may reject the others.
    */
   withRangeCoalescing?: RangeCoalescingFn;
 

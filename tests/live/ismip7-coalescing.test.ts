@@ -31,8 +31,7 @@ const cases = [
     group: "ACCESS-CM2/historical/ocean/8000m",
     variable: "so",
     chunks: 512,
-    maxRequests: 130,
-    coalesce: { maxGap: 128 * 1024 },
+    maxRequests: 160,
   },
 ];
 
@@ -63,17 +62,20 @@ async function capture<T>(fn: () => Promise<T>): Promise<[T, Capture]> {
 
 /**
  * Node's undici may hand a request a keep-alive socket that S3 closed after
- * the previous burst ("UND_ERR_SOCKET other side closed"). That is a fetch
- * pool artefact, not a reader bug, so retry such a read once.
+ * the previous burst ("UND_ERR_SOCKET other side closed"), or time out
+ * connecting on a flaky link. Those are fetch/network artefacts, not reader
+ * bugs, so retry such a read once.
  */
+const RETRIABLE_CODES = new Set(["UND_ERR_SOCKET", "UND_ERR_CONNECT_TIMEOUT"]);
 async function retryOnStaleSocket<T>(fn: () => Promise<T>): Promise<T> {
   try {
     return await fn();
   } catch (error) {
     let cause: unknown = error;
     while (cause instanceof Error) {
-      if ((cause as { code?: string }).code === "UND_ERR_SOCKET") {
-        console.log("stale keep-alive socket; retrying read once");
+      const code = (cause as { code?: string }).code;
+      if (code && RETRIABLE_CODES.has(code)) {
+        console.log(`${code}; retrying read once`);
         return fn();
       }
       cause = cause.cause;

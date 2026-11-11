@@ -9,6 +9,7 @@ import {
   createRangeCoalescer,
   type AsyncReadable,
 } from "../../src/reader/range-coalescer.js";
+import { NotFoundError } from "../../src/storage/storage.js";
 
 type Range = { offset: number; length: number } | { suffixLength: number };
 interface Call {
@@ -471,10 +472,196 @@ describe("createRangeCoalescer", () => {
     expect(store.get).toHaveBeenCalledWith("/f", undefined);
   });
 
+  it("rejects a read aborted during a microtask window and keeps it out of the run", async () => {
+    const backing = makeBacking(1000);
+    const { store, calls } = makeMockStore(backing);
+    const wrapped = createRangeCoalescer()(store);
+    const controller = new AbortController();
+
+    const a = wrapped.getRange(
+      "/f",
+      { offset: 0, length: 100 },
+      { signal: controller.signal },
+    );
+    const b = wrapped.getRange("/f", { offset: 100, length: 100 });
+    controller.abort(); // before the flush runs
+
+    await expect(a).rejects.toMatchObject({ name: "AbortError" });
+    expect(await b).toEqual(backing.slice(100, 200));
+    // The aborted range neither widened the run nor was fetched.
+    expect(ranges(calls)).toEqual([{ offset: 100, length: 100 }]);
+  });
+
+  it("rejects reads aborted during a timer window; a lone survivor passes through", async () => {
+    const backing = makeBacking(1000);
+    const { store, calls } = makeMockStore(backing);
+    const wrapped = createRangeCoalescer({ window: 20 })(store);
+    const controllerA = new AbortController();
+    const controllerB = new AbortController();
+    const controllerC = new AbortController();
+
+    const a = wrapped.getRange(
+      "/f",
+      { offset: 0, length: 100 },
+      { signal: controllerA.signal },
+    );
+    const b = wrapped.getRange(
+      "/f",
+      { offset: 100, length: 100 },
+      { signal: controllerB.signal },
+    );
+    const c = wrapped.getRange(
+      "/f",
+      { offset: 200, length: 100 },
+      { signal: controllerC.signal },
+    );
+    setTimeout(() => {
+      controllerA.abort();
+      controllerB.abort();
+    }, 5);
+
+    await expect(a).rejects.toMatchObject({ name: "AbortError" });
+    await expect(b).rejects.toMatchObject({ name: "AbortError" });
+    expect(await c).toEqual(backing.slice(200, 300));
+    expect(ranges(calls)).toEqual([{ offset: 200, length: 100 }]);
+    expect(calls[0].signal).toBe(controllerC.signal);
+  });
+
+  it("issues nothing when every queued read aborted during the window", async () => {
+    const backing = makeBacking(1000);
+    const { store, calls } = makeMockStore(backing);
+    const wrapped = createRangeCoalescer()(store);
+    const controller = new AbortController();
+
+    const a = wrapped.getRange(
+      "/f",
+      { offset: 0, length: 100 },
+      { signal: controller.signal },
+    );
+    controller.abort();
+
+    await expect(a).rejects.toMatchObject({ name: "AbortError" });
+    await tick();
+    expect(calls).toHaveLength(0);
+  });
+
+  it("hands out independent copies when the wrapped store returns Buffers", async () => {
+    const backing = makeBacking(1000);
+    const { store, calls } = makeMockStore(backing);
+    const original = store.getRange!.bind(store);
+    store.getRange = async (key, range, options) => {
+      const data = await original(key, range, options);
+      return data && Buffer.from(data.buffer, data.byteOffset, data.length);
+    };
+    const wrapped = createRangeCoalescer()(store);
+
+    const [a, b, c] = await Promise.all([
+      wrapped.getRange("/f", { offset: 0, length: 100 }),
+      wrapped.getRange("/f", { offset: 0, length: 100 }),
+      wrapped.getRange("/f", { offset: 100, length: 100 }),
+    ]);
+
+    expect(calls).toHaveLength(1);
+    expect(a!.buffer).not.toBe(b!.buffer);
+    expect(a!.buffer).not.toBe(c!.buffer);
+    // No slice pins the merged buffer, and writes do not leak across callers.
+    expect(a!.buffer.byteLength).toBe(100);
+    expect(c!.buffer.byteLength).toBe(100);
+    a![0] ^= 0xff;
+    expect(b![0]).toBe(backing[0]);
+    expect(c).toEqual(backing.slice(100, 200));
+  });
+
+  it("bridges a gap only while discarded bytes stay within maxWasteRatio", async () => {
+    const backing = makeBacking(2000);
+    const { store, calls } = makeMockStore(backing);
+    const coalescer = createRangeCoalescer({ maxGap: 10_000 });
+    const wrapped = coalescer(store);
+
+    await Promise.all([
+      wrapped.getRange("/f", { offset: 0, length: 100 }),
+      // gap 150: discarded 150 <= delivered 200 -> merge
+      wrapped.getRange("/f", { offset: 250, length: 100 }),
+      // gap 400: discarded 550 > delivered 300 -> split
+      wrapped.getRange("/f", { offset: 750, length: 100 }),
+    ]);
+
+    expect(ranges(calls)).toEqual([
+      { offset: 0, length: 350 },
+      { offset: 750, length: 100 },
+    ]);
+    expect(coalescer.stats.bytesDiscarded).toBe(150);
+  });
+
+  it("maxWasteRatio 0 merges only adjacent or overlapping reads", async () => {
+    const backing = makeBacking(1000);
+    const { store, calls } = makeMockStore(backing);
+    const wrapped = createRangeCoalescer({ maxWasteRatio: 0 })(store);
+
+    await Promise.all([
+      wrapped.getRange("/f", { offset: 0, length: 100 }),
+      wrapped.getRange("/f", { offset: 100, length: 100 }),
+      wrapped.getRange("/f", { offset: 201, length: 100 }),
+    ]);
+
+    expect(ranges(calls)).toEqual([
+      { offset: 0, length: 200 },
+      { offset: 201, length: 100 },
+    ]);
+  });
+
+  it("does not retry members when the failure condemns the whole object", async () => {
+    const backing = makeBacking(1000);
+    const forbidden = Object.assign(new Error("403 Forbidden"), {
+      status: 403,
+    });
+    const { store, calls } = makeMockStore(backing, {
+      fail: () => {
+        throw forbidden;
+      },
+    });
+    const coalescer = createRangeCoalescer();
+    const wrapped = coalescer(store);
+
+    const results = await Promise.allSettled([
+      wrapped.getRange("/f", { offset: 0, length: 100 }),
+      wrapped.getRange("/f", { offset: 100, length: 100 }),
+    ]);
+
+    expect(results.map((r) => r.status)).toEqual(["rejected", "rejected"]);
+    expect((results[0] as PromiseRejectedResult).reason).toBe(forbidden);
+    expect(calls).toHaveLength(1);
+    expect(coalescer.stats.fallbacks).toBe(0);
+  });
+
+  it("does not retry members after a NotFoundError", async () => {
+    const backing = makeBacking(1000);
+    const { store, calls } = makeMockStore(backing, {
+      fail: () => {
+        throw new NotFoundError("/f");
+      },
+    });
+    const wrapped = createRangeCoalescer()(store);
+
+    const results = await Promise.allSettled([
+      wrapped.getRange("/f", { offset: 0, length: 100 }),
+      wrapped.getRange("/f", { offset: 100, length: 100 }),
+    ]);
+
+    expect(results.map((r) => r.status)).toEqual(["rejected", "rejected"]);
+    expect(calls).toHaveLength(1);
+  });
+
   it("rejects invalid options", () => {
     expect(() => createRangeCoalescer({ maxGap: -1 })).toThrow(RangeError);
     expect(() => createRangeCoalescer({ maxBytes: NaN })).toThrow(RangeError);
     expect(() => createRangeCoalescer({ window: -5 })).toThrow(RangeError);
+    expect(() => createRangeCoalescer({ maxWasteRatio: -1 })).toThrow(
+      RangeError,
+    );
+    expect(() =>
+      createRangeCoalescer({ maxWasteRatio: Infinity }),
+    ).not.toThrow();
   });
 
   it("requires a range-capable store", () => {

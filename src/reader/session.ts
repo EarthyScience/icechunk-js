@@ -51,7 +51,12 @@ import type {
   S3ContainerConfig,
 } from "../format/flatbuffers/repo-parser.js";
 
-/** Default byte-gap threshold for zarrita's range coalescer (matches its own default). */
+/**
+ * Byte-gap hint handed to a caller-supplied `withRangeCoalescing` wrapper
+ * (zarrita's `coalesceSize`; matches its own default). The built-in
+ * coalescer from `createRangeCoalescer` fixes its gap (`maxGap`) when it is
+ * created and ignores this hint.
+ */
 const RANGE_COALESCE_SIZE = 32 * 1024;
 // Per-session cap on wrapped range stores. Eviction only reduces future
 // coalescing reuse for older backing objects; it does not affect read

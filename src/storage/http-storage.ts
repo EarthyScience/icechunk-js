@@ -5,7 +5,12 @@
  */
 
 import type { Storage, ByteRange, RequestOptions } from "./storage.js";
-import { NotFoundError, StorageError, isAbortError } from "./storage.js";
+import {
+  NotFoundError,
+  StorageError,
+  isAbortError,
+  parseContentRange,
+} from "./storage.js";
 
 /** Options for HTTP storage */
 export interface HttpStorageOptions {
@@ -95,11 +100,34 @@ export class HttpStorage implements Storage {
     if (response.status !== 200 && response.status !== 206) {
       throw new StorageError(
         `HTTP ${response.status} ${response.statusText} for ${url}`,
+        undefined,
+        response.status,
       );
     }
 
-    const arrayBuffer = await response.arrayBuffer();
-    return new Uint8Array(arrayBuffer);
+    const body = new Uint8Array(await response.arrayBuffer());
+    if (!range) return body;
+
+    if (response.status === 206) {
+      // A partial body that is not the span we asked for would be sliced
+      // apart by offset downstream; reject it here rather than shift data.
+      const got = parseContentRange(response);
+      if (got && (got.start !== range.start || got.end !== range.end - 1)) {
+        throw new StorageError(
+          `Range response for ${url} covers bytes ${got.start}-${got.end}, not the requested ${range.start}-${range.end - 1}`,
+        );
+      }
+      return body;
+    }
+
+    // 200: the server ignored the Range header and sent the whole object.
+    // Copy out the requested window so callers always get exactly the range.
+    if (body.length >= range.end) {
+      return new Uint8Array(body.subarray(range.start, range.end));
+    }
+    throw new StorageError(
+      `Range request not honored for ${url}: need at least ${range.end} bytes to slice the requested range, got ${body.length}`,
+    );
   }
 
   async exists(path: string, options?: RequestOptions): Promise<boolean> {
