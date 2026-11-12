@@ -38,6 +38,17 @@ export class DefaultFetchClient implements FetchClient {
 export interface RequestOptions {
   /** AbortSignal for request cancellation */
   signal?: AbortSignal;
+  /**
+   * Fetch cache mode for this request, overriding the storage default.
+   *
+   * Content-addressed objects (snapshots, manifests, chunks) never change and
+   * may be cached freely. The repo pointer and ref.json files are overwritten
+   * in place by every commit; the repository reads them with "no-cache" so a
+   * browser revalidates them (an ETag round trip) instead of serving a copy
+   * it judged fresh by heuristics, which would pin a client to an old
+   * snapshot.
+   */
+  cache?: RequestCache;
   /** Pluggable HTTP client for virtual chunk fetching */
   fetchClient?: FetchClient;
   /**

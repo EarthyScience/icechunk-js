@@ -81,7 +81,7 @@ export class HttpStorage implements Storage {
         method: "GET",
         headers,
         credentials: this.options.credentials,
-        cache: this.options.cache,
+        cache: options?.cache ?? this.options.cache,
         signal: options?.signal,
       });
     } catch (error) {
