@@ -75,11 +75,10 @@ export class Repository {
     this.repoInfoAttempted = true;
 
     try {
-      const data = await this.storage.getObject(
-        REPO_INFO_PATH,
-        undefined,
-        options,
-      );
+      const data = await this.storage.getObject(REPO_INFO_PATH, undefined, {
+        ...options,
+        cache: "no-cache",
+      });
       this.repoInfo = parseRepo(data);
       return this.repoInfo;
     } catch (error) {
@@ -528,7 +527,10 @@ export class Repository {
     path: string,
     options?: RequestOptions,
   ): Promise<RefData> {
-    const data = await this.storage.getObject(path, undefined, options);
+    const data = await this.storage.getObject(path, undefined, {
+      ...options,
+      cache: "no-cache",
+    });
     const json = new TextDecoder().decode(data);
     return JSON.parse(json) as RefData;
   }

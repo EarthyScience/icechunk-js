@@ -3,6 +3,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Repository } from "../../src/reader/repository.js";
+import type { ByteRange, RequestOptions } from "../../src/storage/storage.js";
 import type { ReadSession } from "../../src/reader/session.js";
 import {
   parseRepo,
@@ -271,6 +272,39 @@ describe("Repository", () => {
 
       expect(tags).not.toContain("deleted-tag");
       expect(tags).toHaveLength(0);
+    });
+  });
+
+  describe("mutable objects are revalidated", () => {
+    class RecordingStorage extends MockStorage {
+      cacheModes: Record<string, RequestCache | undefined> = {};
+      async getObject(
+        path: string,
+        range?: ByteRange,
+        options?: RequestOptions,
+      ): Promise<Uint8Array> {
+        this.cacheModes[path] = options?.cache;
+        return super.getObject(path, range, options);
+      }
+    }
+
+    it("reads the repo pointer with no-cache", async () => {
+      const storage = new RecordingStorage({
+        [REPO_INFO_PATH]: "not a valid repo file",
+      });
+      await expect(Repository.open({ storage })).rejects.toThrow();
+      expect(storage.cacheModes[REPO_INFO_PATH]).toBe("no-cache");
+    });
+
+    it("reads a legacy ref.json with no-cache", async () => {
+      const snapshotId = createMockSnapshotId(1);
+      const refPath = getBranchRefPath("main");
+      const storage = new RecordingStorage({
+        [refPath]: createMockRefJson(snapshotId),
+      });
+      const repo = await Repository.open({ storage });
+      await repo.checkoutBranch("main").catch(() => undefined);
+      expect(storage.cacheModes[refPath]).toBe("no-cache");
     });
   });
 

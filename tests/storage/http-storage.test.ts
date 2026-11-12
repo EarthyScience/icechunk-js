@@ -121,6 +121,32 @@ describe("HttpStorage", () => {
     });
   });
 
+  describe("per-request cache mode", () => {
+    it("overrides the storage default for one request", async () => {
+      vi.mocked(global.fetch).mockResolvedValue({
+        status: 200,
+        arrayBuffer: () => Promise.resolve(new ArrayBuffer(0)),
+      } as Response);
+
+      const storage = new HttpStorage("https://example.com/repo", {
+        cache: "force-cache",
+      });
+      await storage.getObject("repo", undefined, { cache: "no-cache" });
+      await storage.getObject("snapshots/abc");
+
+      expect(global.fetch).toHaveBeenNthCalledWith(
+        1,
+        expect.any(String),
+        expect.objectContaining({ cache: "no-cache" }),
+      );
+      expect(global.fetch).toHaveBeenNthCalledWith(
+        2,
+        expect.any(String),
+        expect.objectContaining({ cache: "force-cache" }),
+      );
+    });
+  });
+
   describe("exists", () => {
     it("should return true for existing object", async () => {
       vi.mocked(global.fetch).mockResolvedValue({ ok: true } as Response);

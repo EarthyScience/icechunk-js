@@ -38,6 +38,17 @@ export class DefaultFetchClient implements FetchClient {
 export interface RequestOptions {
   /** AbortSignal for request cancellation */
   signal?: AbortSignal;
+  /**
+   * Fetch cache mode for this request, overriding the storage default.
+   *
+   * Content-addressed objects (snapshots, manifests, chunks) never change and
+   * may be cached freely. The repo pointer and ref.json files are overwritten
+   * in place by every commit; the repository reads them with "no-cache" so a
+   * browser revalidates them (an ETag round trip) instead of serving a copy
+   * it judged fresh by heuristics, which would pin a client to an old
+   * snapshot.
+   */
+  cache?: RequestCache;
   /** Pluggable HTTP client for virtual chunk fetching */
   fetchClient?: FetchClient;
   /**
@@ -76,10 +87,39 @@ export class StorageError extends Error {
   constructor(
     message: string,
     public readonly cause?: Error,
+    /** HTTP status that produced this error, when there was one. */
+    public readonly status?: number,
   ) {
     super(message);
     this.name = "StorageError";
   }
+}
+
+/** The byte span a `Content-Range: bytes <start>-<end>/<size>` header declares. */
+export interface ContentRange {
+  /** First byte of the body, inclusive. */
+  start: number;
+  /** Last byte of the body, inclusive. */
+  end: number;
+  /** Object size, or null when the server sent `*`. */
+  size: number | null;
+}
+
+/**
+ * Parse a response's `Content-Range` header. Returns null when the header is
+ * absent or is not a byte span (an unsatisfied `bytes *\/size` has none).
+ * Tolerates mock responses without a `headers` object.
+ */
+export function parseContentRange(response: Response): ContentRange | null {
+  const value = response.headers?.get?.("content-range");
+  if (!value) return null;
+  const match = /^bytes\s+(\d+)-(\d+)\/(\d+|\*)$/i.exec(value.trim());
+  if (!match) return null;
+  return {
+    start: Number(match[1]),
+    end: Number(match[2]),
+    size: match[3] === "*" ? null : Number(match[3]),
+  };
 }
 
 type ErrorWithName = { name: unknown };
