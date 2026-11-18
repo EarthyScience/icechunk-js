@@ -188,6 +188,84 @@ describe("range coalescer adapters", () => {
     fetchSpy.mockRestore();
   });
 
+  it("rejects a 206 whose Content-Range is not the requested span", async () => {
+    const url = "https://example.com/data.bin";
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      mockFetchResponse(206, new Uint8Array([0, 1, 2, 3]), {
+        "content-range": "bytes 4-7/100",
+      }),
+    );
+    const store = makeUrlStore({ url });
+
+    await expect(store.getRange("/", { offset: 0, length: 4 })).rejects.toThrow(
+      "Range response for https://example.com/data.bin covers bytes 4-7, not the requested bytes 0-3",
+    );
+
+    fetchSpy.mockRestore();
+  });
+
+  it("accepts a 206 whose Content-Range matches, and suffix spans ending at the object size", async () => {
+    const url = "https://example.com/data.bin";
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        mockFetchResponse(206, new Uint8Array([0, 1, 2, 3]), {
+          "content-range": "bytes 10-13/100",
+        }),
+      )
+      .mockResolvedValueOnce(
+        mockFetchResponse(206, new Uint8Array([7, 8]), {
+          "content-range": "bytes 98-99/100",
+        }),
+      )
+      .mockResolvedValueOnce(
+        mockFetchResponse(206, new Uint8Array([7, 8]), {
+          "content-range": "bytes 90-91/100",
+        }),
+      );
+    const store = makeUrlStore({ url });
+
+    expect(await store.getRange("/", { offset: 10, length: 4 })).toEqual(
+      new Uint8Array([0, 1, 2, 3]),
+    );
+    expect(await store.getRange("/", { suffixLength: 2 })).toEqual(
+      new Uint8Array([7, 8]),
+    );
+    await expect(store.getRange("/", { suffixLength: 2 })).rejects.toThrow(
+      "covers bytes 90-91, not the requested last 2 bytes",
+    );
+
+    fetchSpy.mockRestore();
+  });
+
+  it("carries the HTTP status on virtual fetch failures", async () => {
+    const url = "https://example.com/data.bin";
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(mockFetchResponse(403, new Uint8Array(0)));
+    const store = makeUrlStore({ url });
+
+    await expect(
+      store.getRange("/", { offset: 0, length: 4 }),
+    ).rejects.toMatchObject({ status: 403 });
+
+    fetchSpy.mockRestore();
+  });
+
+  it("copies the storage full-object fallback window instead of returning a view", async () => {
+    const backing = makeBacking(64);
+    const storage = makeStorage(
+      Buffer.from(backing.buffer, backing.byteOffset, backing.length),
+    );
+    const store = makeStorageStore(storage);
+
+    const data = await store.getRange("/chunk", { offset: 8, length: 4 });
+
+    expect(data).toEqual(backing.slice(8, 12));
+    expect(data!.buffer).not.toBe(backing.buffer);
+    expect(data!.buffer.byteLength).toBe(4);
+  });
+
   it("rejects URL offset 206 responses with mismatched body length", async () => {
     const url = "https://example.com/data.bin";
     const fetchSpy = vi
