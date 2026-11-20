@@ -123,7 +123,18 @@ function parseVirtualChunkContainers(repo: FbsRepo): VirtualChunkContainer[] {
   } catch {
     return result;
   }
+  return virtualChunkContainersFromConfig(config);
+}
 
+/**
+ * Extract virtual chunk containers from a decoded RepositoryConfig: the v2
+ * repo file's flexbuffers config, or a v1 `config.yaml` read into the same
+ * shape. Returns an empty array when the config declares none.
+ */
+export function virtualChunkContainersFromConfig(
+  config: unknown,
+): VirtualChunkContainer[] {
+  const result: VirtualChunkContainer[] = [];
   if (!isRecord(config)) return result;
   const containers = config.virtual_chunk_containers;
   if (!isRecord(containers)) return result;

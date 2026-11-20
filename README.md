@@ -163,6 +163,13 @@ a region (repos written by Icechunk do), reads go straight to that regional
 endpoint — which serves CORS and works in both Node and the browser, with no
 extra configuration.
 
+The config is read from the repo file of a v2 repository and from `config.yaml`
+of a v1 repository. The `config.yaml` reader covers the layout Icechunk writes
+for ordinary values, not YAML in general: a containers section it cannot read
+(one edited by hand into another style, or holding a value with control
+characters or a line break) is ignored as a whole, as is a missing or
+unreadable file.
+
 If no region is known, dotted-name buckets fall back to the global endpoint,
 whose region redirect (for buckets outside `us-east-1`) is resolved
 automatically in Node but not in browsers — the cross-origin redirect carries no

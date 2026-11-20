@@ -3,12 +3,17 @@
  */
 
 import type { Storage, RequestOptions } from "../storage/storage.js";
-import { NotFoundError, isAbortError } from "../storage/storage.js";
+import {
+  NotFoundError,
+  StorageError,
+  isAbortError,
+} from "../storage/storage.js";
 import {
   getBranchRefDirPath,
   getBranchRefPath,
   getTagRefDirPath,
   getTagRefPath,
+  CONFIG_PATH,
   PATHS,
   REPO_INFO_PATH,
 } from "../format/constants.js";
@@ -21,7 +26,9 @@ import {
   listTagsFromRepo,
   resolveSnapshotParent,
   type ParsedRepo,
+  type VirtualChunkContainer,
 } from "../format/flatbuffers/repo-parser.js";
+import { parseConfigYamlContainers } from "../format/config-yaml.js";
 import { ReadSession } from "./session.js";
 
 /** Reference data stored in ref.json files */
@@ -49,6 +56,7 @@ export class Repository {
   private storage: Storage;
   private repoInfo: ParsedRepo | null = null;
   private repoInfoAttempted = false;
+  private v1Containers: VirtualChunkContainer[] | null = null;
 
   private constructor(storage: Storage) {
     this.storage = storage;
@@ -96,6 +104,47 @@ export class Repository {
         `Failed to parse v2 repo file: ${error instanceof Error ? error.message : error}`,
       );
     }
+  }
+
+  /**
+   * Load and cache the virtual chunk containers of a v1 repository, which
+   * keeps its config in `config.yaml` rather than in a repo file.
+   *
+   * Best-effort, like the v2 config. A repository that never saved a config
+   * has no such file (S3 answers 403 rather than 404 for a missing key of a
+   * bucket that cannot be listed), and a file that cannot be parsed declares
+   * no containers; chunk locations then resolve as they would without a
+   * config. Any other failure also yields no containers but is not cached, so
+   * the next checkout asks again.
+   *
+   * @throws An error named "AbortError" if the operation was aborted
+   */
+  private async loadV1Containers(
+    options?: RequestOptions,
+  ): Promise<VirtualChunkContainer[]> {
+    if (this.v1Containers) {
+      return this.v1Containers;
+    }
+    let containers: VirtualChunkContainer[] = [];
+    let settled = true;
+    try {
+      const data = await this.storage.getObject(CONFIG_PATH, undefined, {
+        ...options,
+        cache: "no-cache",
+      });
+      containers = parseConfigYamlContainers(new TextDecoder().decode(data));
+    } catch (error) {
+      if (isAbortError(error)) {
+        throw error;
+      }
+      settled =
+        error instanceof NotFoundError ||
+        (error instanceof StorageError && error.status === 403);
+    }
+    if (settled) {
+      this.v1Containers = containers;
+    }
+    return containers;
   }
 
   /**
@@ -370,17 +419,26 @@ export class Repository {
       });
     }
 
-    // V1 fallback - file-based lookup
-    const refDirPath = getBranchRefDirPath(name);
-    const refPath = await this.findLatestRefFile(
-      refDirPath,
-      getBranchRefPath(name),
-    );
-    if (!refPath) {
-      throw new Error(`Reference not found: ${refDirPath}`);
-    }
-    const snapshotId = await this.readSnapshotIdFromRef(refPath, options);
-    return ReadSession.open(this.storage, snapshotId, options);
+    // V1 fallback - file-based lookup, alongside the read of config.yaml
+    const resolveSnapshotId = async (): Promise<Uint8Array> => {
+      const refDirPath = getBranchRefDirPath(name);
+      const refPath = await this.findLatestRefFile(
+        refDirPath,
+        getBranchRefPath(name),
+      );
+      if (!refPath) {
+        throw new Error(`Reference not found: ${refDirPath}`);
+      }
+      return this.readSnapshotIdFromRef(refPath, options);
+    };
+    const [snapshotId, virtualChunkContainers] = await Promise.all([
+      resolveSnapshotId(),
+      this.loadV1Containers(options),
+    ]);
+    return ReadSession.open(this.storage, snapshotId, {
+      ...options,
+      virtualChunkContainers,
+    });
   }
 
   /**
@@ -407,25 +465,34 @@ export class Repository {
       });
     }
 
-    // V1 fallback - file-based lookup
-    const refDirPath = getTagRefDirPath(name);
-    const legacyPath = getTagRefPath(name);
-    const refPath = await this.findLatestRefFile(refDirPath, legacyPath);
-    if (!refPath) {
-      throw new Error(`Reference not found: ${refDirPath}`);
-    }
+    // V1 fallback - file-based lookup, alongside the read of config.yaml
+    const resolveSnapshotId = async (): Promise<Uint8Array> => {
+      const refDirPath = getTagRefDirPath(name);
+      const legacyPath = getTagRefPath(name);
+      const refPath = await this.findLatestRefFile(refDirPath, legacyPath);
+      if (!refPath) {
+        throw new Error(`Reference not found: ${refDirPath}`);
+      }
 
-    // Check for tombstone only in no-list fallback path (list-capable storage
-    // already handles tombstones in findLatestRefFile). Matches Rust behavior.
-    if (
-      refPath === legacyPath &&
-      (await this.storage.exists(`${refPath}.deleted`, options))
-    ) {
-      throw new Error(`Tag not found: ${name}`);
-    }
+      // Check for tombstone only in no-list fallback path (list-capable storage
+      // already handles tombstones in findLatestRefFile). Matches Rust behavior.
+      if (
+        refPath === legacyPath &&
+        (await this.storage.exists(`${refPath}.deleted`, options))
+      ) {
+        throw new Error(`Tag not found: ${name}`);
+      }
 
-    const snapshotId = await this.readSnapshotIdFromRef(refPath, options);
-    return ReadSession.open(this.storage, snapshotId, options);
+      return this.readSnapshotIdFromRef(refPath, options);
+    };
+    const [snapshotId, virtualChunkContainers] = await Promise.all([
+      resolveSnapshotId(),
+      this.loadV1Containers(options),
+    ]);
+    return ReadSession.open(this.storage, snapshotId, {
+      ...options,
+      virtualChunkContainers,
+    });
   }
 
   /**
@@ -443,13 +510,14 @@ export class Repository {
       typeof snapshotId === "string"
         ? decodeObjectId12(snapshotId)
         : snapshotId;
-    // Load repo info opportunistically so v2 sessions get VCC resolution;
-    // v1 repos return null here and sessions run with an empty container map.
+    // Sessions get VCC resolution from the repo file (v2) or, when there is
+    // none, from config.yaml (v1).
     const repoInfo = await this.loadRepoInfo(options);
-    const virtualChunkContainers = repoInfo?.virtualChunkContainers;
     return ReadSession.open(this.storage, id, {
       ...options,
-      ...(virtualChunkContainers && { virtualChunkContainers }),
+      virtualChunkContainers: repoInfo
+        ? repoInfo.virtualChunkContainers
+        : await this.loadV1Containers(options),
     });
   }
 

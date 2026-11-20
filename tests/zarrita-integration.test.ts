@@ -466,7 +466,9 @@ describe("Zarrita Integration", () => {
       const originalFetch = globalThis.fetch;
       vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
         const url = typeof input === "string" ? input : input.toString();
-        if (url.includes("testbucket.s3.amazonaws.com")) {
+        // The v1 repo's config.yaml routes this container to its configured
+        // endpoint_url (a path-style S3-compatible host), not AWS.
+        if (url.includes("localhost:4200/testbucket")) {
           return new Response(chunkBytes.buffer.slice(0), {
             status: 206,
             headers: { "Content-Type": "application/octet-stream" },
@@ -532,7 +534,7 @@ describe("Zarrita Integration", () => {
         fetch: vi
           .fn()
           .mockImplementation(async (url: string, init?: RequestInit) => {
-            if (url.includes("testbucket.s3.amazonaws.com")) {
+            if (url.includes("localhost:4200/testbucket")) {
               return new Response(chunkBytes.buffer.slice(0), {
                 status: 206,
                 headers: { "Content-Type": "application/octet-stream" },
@@ -559,7 +561,7 @@ describe("Zarrita Integration", () => {
 
       // Verify fetchClient.fetch was called with the translated S3 URL
       expect(fetchClient.fetch).toHaveBeenCalledWith(
-        expect.stringContaining("testbucket.s3.amazonaws.com"),
+        expect.stringContaining("localhost:4200/testbucket"),
         expect.objectContaining({
           headers: expect.objectContaining({
             Range: expect.any(String),
