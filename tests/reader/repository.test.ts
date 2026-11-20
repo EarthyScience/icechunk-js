@@ -4,6 +4,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Repository } from "../../src/reader/repository.js";
 import type { ByteRange, RequestOptions } from "../../src/storage/storage.js";
+import { StorageError } from "../../src/storage/storage.js";
 import type { ReadSession } from "../../src/reader/session.js";
 import {
   parseRepo,
@@ -22,6 +23,7 @@ import {
   getTagRefPath,
   getTagRefDirPath,
   REPO_INFO_PATH,
+  CONFIG_PATH,
 } from "../../src/format/constants.js";
 import {
   decodeObjectId12,
@@ -305,6 +307,148 @@ describe("Repository", () => {
       const repo = await Repository.open({ storage });
       await repo.checkoutBranch("main").catch(() => undefined);
       expect(storage.cacheModes[refPath]).toBe("no-cache");
+    });
+  });
+
+  describe("virtual chunk containers (v1 format)", () => {
+    const snapshotId = "NXH3M0HJ7EEJ0699DPP0";
+    const containersOf = (session: ReadSession) =>
+      (
+        session as unknown as {
+          virtualChunkContainers: { name: string | null; s3?: object }[];
+        }
+      ).virtualChunkContainers;
+    const v1Files = (config?: string) => ({
+      [getBranchRefPath("main")]: readFileSync(
+        join(TEST_REPO_V1_PATH, getBranchRefPath("main")),
+      ),
+      [`snapshots/${snapshotId}`]: readFileSync(
+        join(TEST_REPO_V1_PATH, `snapshots/${snapshotId}`),
+      ),
+      ...(config !== undefined && { [CONFIG_PATH]: config }),
+    });
+    const config = readFileSync(join(TEST_REPO_V1_PATH, CONFIG_PATH), "utf8");
+    const s3Container = {
+      name: "s3",
+      urlPrefix: "s3://testbucket",
+      s3: {
+        region: "us-east-1",
+        endpointUrl: "http://localhost:4200",
+        forcePathStyle: true,
+      },
+    };
+
+    it("should give a branch session the containers of config.yaml", async () => {
+      const storage = new MockStorage(v1Files(config));
+      const repo = await Repository.open({ storage });
+      const session = await repo.checkoutBranch("main");
+      expect(containersOf(session)).toContainEqual(s3Container);
+    });
+
+    it("should give a snapshot session the containers of config.yaml", async () => {
+      const storage = new MockStorage(v1Files(config));
+      const repo = await Repository.open({ storage, formatVersion: "v1" });
+      const session = await repo.checkoutSnapshot(snapshotId);
+      expect(containersOf(session)).toContainEqual(s3Container);
+    });
+
+    it("should read config.yaml once per repository", async () => {
+      const storage = new MockStorage(v1Files(config));
+      const repo = await Repository.open({ storage });
+      await repo.checkoutBranch("main");
+      await repo.checkoutSnapshot(snapshotId);
+      expect(
+        storage.requestLog.filter(
+          (request) => request === `getObject:${CONFIG_PATH}`,
+        ),
+      ).toHaveLength(1);
+    });
+
+    it("should open a session without containers when there is no config.yaml", async () => {
+      const storage = new MockStorage(v1Files());
+      const repo = await Repository.open({ storage });
+      const session = await repo.checkoutBranch("main");
+      expect(containersOf(session)).toEqual([]);
+    });
+
+    it("should open a session without containers when config.yaml is not readable as a config", async () => {
+      const storage = new MockStorage(
+        v1Files("virtual_chunk_containers:\n  - not\n  - a mapping\n"),
+      );
+      const repo = await Repository.open({ storage });
+      const session = await repo.checkoutBranch("main");
+      expect(containersOf(session)).toEqual([]);
+    });
+
+    it("should give a tag session the containers of config.yaml", async () => {
+      const storage = new MockStorage({
+        ...v1Files(config),
+        [getTagRefPath("v1.0")]: { snapshot: snapshotId },
+      });
+      const repo = await Repository.open({ storage });
+      const session = await repo.checkoutTag("v1.0");
+      expect(containersOf(session)).toContainEqual(s3Container);
+    });
+
+    /** Storage whose reads of config.yaml fail with the queued errors first. */
+    class FailingConfigStorage extends MockStorage {
+      failures: Error[] = [];
+      async getObject(
+        path: string,
+        range?: ByteRange,
+        options?: RequestOptions,
+      ): Promise<Uint8Array> {
+        const failure = path === CONFIG_PATH && this.failures.shift();
+        if (failure) {
+          throw failure;
+        }
+        return super.getObject(path, range, options);
+      }
+    }
+    const configReads = (storage: MockStorage) =>
+      storage.requestLog.filter(
+        (request) => request === `getObject:${CONFIG_PATH}`,
+      ).length;
+
+    it("should ask for config.yaml again after a failure that may pass", async () => {
+      const storage = new FailingConfigStorage(v1Files(config));
+      storage.failures = [new StorageError("HTTP 503", undefined, 503)];
+      const repo = await Repository.open({ storage });
+
+      const first = await repo.checkoutBranch("main");
+      expect(containersOf(first)).toEqual([]);
+      const second = await repo.checkoutBranch("main");
+      expect(containersOf(second)).toContainEqual(s3Container);
+    });
+
+    it("should take a 403 for config.yaml as a repository without one", async () => {
+      const storage = new FailingConfigStorage(v1Files(config));
+      storage.failures = [new StorageError("HTTP 403", undefined, 403)];
+      const repo = await Repository.open({ storage });
+
+      expect(containersOf(await repo.checkoutBranch("main"))).toEqual([]);
+      expect(containersOf(await repo.checkoutBranch("main"))).toEqual([]);
+      expect(configReads(storage)).toBe(0);
+    });
+
+    it("should pass on an abort of the config.yaml read and recover from it", async () => {
+      const storage = new FailingConfigStorage(v1Files(config));
+      const abort = new Error("aborted");
+      abort.name = "AbortError";
+      storage.failures = [abort];
+      const repo = await Repository.open({ storage });
+
+      await expect(repo.checkoutBranch("main")).rejects.toBe(abort);
+      const session = await repo.checkoutBranch("main");
+      expect(containersOf(session)).toContainEqual(s3Container);
+    });
+
+    it("should not read config.yaml for a v2 repository", async () => {
+      const storage = loadRepoIntoMockStorage(TEST_REPO_V2_PATH);
+      const repo = await Repository.open({ storage });
+      await repo.checkoutBranch("main");
+      expect(storage.requestLog).toContain(`getObject:${REPO_INFO_PATH}`);
+      expect(storage.requestLog).not.toContain(`getObject:${CONFIG_PATH}`);
     });
   });
 

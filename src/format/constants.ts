@@ -23,6 +23,9 @@ export const PATHS = {
 /** Repository info file path (v2 format) */
 export const REPO_INFO_PATH = "repo";
 
+/** Repository config file path (v1 format; v2 keeps the config in the repo file) */
+export const CONFIG_PATH = "config.yaml";
+
 /**
  * Get the storage path prefix for a branch ref directory.
  *
